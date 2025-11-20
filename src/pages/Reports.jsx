@@ -1,399 +1,444 @@
 // src/pages/Reports.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import api from "../services/api";
-import { MapPin, Activity, Clock, AlertTriangle, Download } from "lucide-react";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
-import * as XLSX from "xlsx";
-import { saveAs } from "file-saver";
-import jsPDF from "jspdf";
-import html2canvas from "html2canvas";
+import { MapContainer, TileLayer, Polyline, Marker, Popup } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
+import L from "leaflet";
+import { getDevices, runReport } from "../services/traccar";
 
-/**
- * Reports.jsx - Pacote C (premium)
- * - Abas: Rotas, Viagens, Paradas, Histórico, Eventos
- * - Filtros: data range (início/fim) e seleção de veículo
- * - Export: Excel, PDF
- * - Gráficos básicos (Recharts)
- *
- * Observação:
- * - Este componente usa /devices e /positions como fonte inicial.
- * - Para relatórios 100% confiáveis substitua por endpoints do backend
- *   que já retornem viagens/rotas/paradas agregadas.
- */
+// Corrige assets padrão do Leaflet (necessário em bundlers)
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+});
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
+const tabs = [
+  { value: "route", label: "Rotas" },
+  { value: "trips", label: "Viagens" },
+  { value: "stops", label: "Paradas" },
+  { value: "events", label: "Eventos" },
+  { value: "resumo", label: "Resumo" },
+];
 
-function formatDateTime(iso) {
-  if (!iso) return "-";
-  const d = new Date(iso);
-  return d.toLocaleString();
-}
+const toDateTimeLocal = (date) => date.toISOString().slice(0, 16);
+const addHours = (date, h) => {
+  const d = new Date(date);
+  d.setHours(d.getHours() + h);
+  return d;
+};
+
+const formatDateTime = (value) => {
+  if (!value) return "-";
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? "-" : d.toLocaleString();
+};
+
+const formatDuration = (value) => {
+  if (value == null) return "-";
+  const ms = value > 1e6 ? value : value * 1000;
+  const totalSeconds = Math.floor(ms / 1000);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return `${h}h ${m}m ${s}s`;
+};
+
+const formatDistance = (value) => {
+  if (value == null) return "-";
+  const meters = typeof value === "number" ? value : Number(value);
+  if (Number.isNaN(meters)) return "-";
+  return `${(meters / 1000).toFixed(1)} km`;
+};
+
+const formatCoords = (lat, lon) => {
+  if (lat == null || lon == null) return "-";
+  return `${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}`;
+};
 
 export default function Reports() {
   const [devices, setDevices] = useState([]);
-  const [positions, setPositions] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [selectedDevice, setSelectedDevice] = useState("");
+  const [activeTab, setActiveTab] = useState("route");
+  const [fromDate, setFromDate] = useState(() => toDateTimeLocal(addHours(new Date(), -24)));
+  const [toDate, setToDate] = useState(() => toDateTimeLocal(new Date()));
 
-  // filtros
-  const [vehicleFilter, setVehicleFilter] = useState("all");
-  const [fromDate, setFromDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 7);
-    return d.toISOString().slice(0, 10);
+  const [dataByType, setDataByType] = useState({
+    route: { rows: [], raw: [], mapPoints: [] },
+    trips: { rows: [] },
+    stops: { rows: [] },
+    events: { rows: [] },
   });
-  const [toDate, setToDate] = useState(todayISO());
-
-  const [activeTab, setActiveTab] = useState("rotas");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [generatedTypes, setGeneratedTypes] = useState({});
 
   useEffect(() => {
-    const load = async () => {
-      setLoading(true);
+    const loadDevices = async () => {
       try {
-        const [dres, pres] = await Promise.all([api.get("/devices"), api.get("/positions")]);
-        setDevices(dres.data || []);
-        setPositions(pres.data || []);
+        const list = await getDevices();
+        setDevices(list || []);
       } catch (err) {
-        console.error("Erro ao carregar relatórios:", err);
-        setDevices([]);
-        setPositions([]);
-      } finally {
-        setLoading(false);
+        setError("Não foi possível carregar dispositivos");
       }
     };
-    load();
+    loadDevices();
   }, []);
 
-  // filtrar positions por data e veículo
-  const filteredPositions = useMemo(() => {
-    const from = new Date(fromDate).getTime();
-    const to = new Date(toDate).getTime() + 24 * 60 * 60 * 1000 - 1; // fim do dia
-    return (positions || []).filter((p) => {
-      const time = new Date(p.serverTime || p.fixTime || p.timestamp || p.deviceTime || p.time).getTime();
-      if (Number.isNaN(time)) return false;
-      if (time < from || time > to) return false;
-      if (vehicleFilter !== "all") return p.deviceId === Number(vehicleFilter);
-      return true;
-    }).sort((a,b) => new Date(a.serverTime || a.fixTime || a.timestamp || a.deviceTime || a.time) - new Date(b.serverTime || b.fixTime || b.timestamp || b.deviceTime || b.time));
-  }, [positions, fromDate, toDate, vehicleFilter]);
+  const toIso = (val) => new Date(val).toISOString();
 
-  // dados simples para tabela Rotas: agrupamento por device: primeiro e último ponto no período
-  const routes = useMemo(() => {
-    const byDevice = {};
-    for (const p of filteredPositions) {
-      const id = p.deviceId;
-      if (!byDevice[id]) byDevice[id] = [];
-      byDevice[id].push(p);
+  const normalizeRows = (type, data) => {
+    if (!Array.isArray(data)) return [];
+    switch (type) {
+      case "route":
+        return data.map((item, idx) => ({
+          id: item.id || idx,
+          time: formatDateTime(item.serverTime || item.deviceTime || item.fixTime || item.time),
+          address: item.address || formatCoords(item.latitude, item.longitude),
+          speed: item.speed != null ? `${item.speed} km/h` : "-",
+          distance: formatDistance(item.attributes?.distance ?? item.distance ?? item.attributes?.totalDistance),
+          duration: "-",
+          event: "-",
+          lat: item.latitude,
+          lon: item.longitude,
+        }));
+      case "trips":
+        return data.map((item, idx) => ({
+          id: item.id || idx,
+          time: formatDateTime(item.startTime),
+          address: `${item.startAddress || formatCoords(item.startLat, item.startLon)} → ${
+            item.endAddress || formatCoords(item.endLat, item.endLon)
+          }`,
+          speed: item.maxSpeed != null ? `${item.maxSpeed} km/h` : "-",
+          distance: formatDistance(item.distance),
+          duration: formatDuration(item.duration),
+          event: "-",
+        }));
+      case "stops":
+        return data.map((item, idx) => ({
+          id: item.id || idx,
+          time: formatDateTime(item.startTime),
+          address: item.address || formatCoords(item.latitude, item.longitude),
+          speed: "-",
+          distance: "-",
+          duration: formatDuration(item.duration),
+          event: "-",
+        }));
+      case "events":
+        return data.map((item, idx) => ({
+          id: item.id || idx,
+          time: formatDateTime(item.serverTime || item.deviceTime),
+          address: item.address || formatCoords(item.latitude, item.longitude),
+          speed: item.speed != null ? `${item.speed} km/h` : "-",
+          distance: "-",
+          duration: "-",
+          event: item.type || "-",
+        }));
+      default:
+        return [];
     }
-    const rows = [];
-    for (const idStr of Object.keys(byDevice)) {
-      const arr = byDevice[idStr];
-      const first = arr[0];
-      const last = arr[arr.length - 1];
-      const device = devices.find((d) => d.id === Number(idStr)) || {};
-      rows.push({
-        deviceId: idStr,
-        deviceName: device.name || device.uniqueId || `#${idStr}`,
-        startTime: first?.serverTime || first?.fixTime || first?.time || null,
-        startLat: first?.latitude,
-        startLon: first?.longitude,
-        endTime: last?.serverTime || last?.fixTime || last?.time || null,
-        endLat: last?.latitude,
-        endLon: last?.longitude,
-        // distância não calculada (placeholder) — pode ser implementada via haversine ou backend
-        distanceKm: "—",
-        points: arr.length,
-      });
-    }
-    return rows;
-  }, [filteredPositions, devices]);
+  };
 
-  // Viagens: por device, contar deslocamentos (aqui simplificado: se houver mais de 1 ponto -> 1 viagem)
-  const trips = useMemo(() => {
-    return routes.map(r => ({
-      id: r.deviceId,
-      vehicle: r.deviceName,
-      start: r.startTime,
-      end: r.endTime,
-      duration: r.startTime && r.endTime ? msToDuration(new Date(r.endTime) - new Date(r.startTime)) : "-",
-      points: r.points
-    }));
-  }, [routes]);
+  const handleGenerate = async (type) => {
+    if (type === "resumo") return;
+    setError("");
+    setLoading(true);
+    try {
+      const deviceId = Number(selectedDevice);
+      if (!deviceId) throw new Error("Selecione um dispositivo.");
+      const from = toIso(fromDate);
+      const to = toIso(toDate);
+      const data = await runReport(type, deviceId, from, to);
+      const normalized = normalizeRows(type, data);
 
-  // Paradas: pontos com speed === 0 agrupados (simples)
-  const stops = useMemo(() => {
-    const stopsList = [];
-    let cur = null;
-    for (const p of filteredPositions) {
-      const speed = p.speed ?? 0;
-      if (speed === 0) {
-        if (!cur) {
-          cur = { deviceId: p.deviceId, start: p.serverTime || p.fixTime || p.time, end: p.serverTime || p.fixTime || p.time, lat: p.latitude, lon: p.longitude, count:1 };
-        } else {
-          cur.end = p.serverTime || p.fixTime || p.time;
-          cur.count++;
-        }
-      } else {
-        if (cur) {
-          stopsList.push(cur);
-          cur = null;
-        }
-      }
+      setDataByType((prev) => ({
+        ...prev,
+        [type]: {
+          rows: normalized,
+          raw: type === "route" ? data : prev[type]?.raw,
+          mapPoints:
+            type === "route"
+              ? normalized
+                  .filter((r) => r.lat != null && r.lon != null)
+                  .map((r) => [r.lat, r.lon])
+              : prev[type]?.mapPoints,
+        },
+      }));
+
+      setGeneratedTypes((prev) => ({ ...prev, [type]: true }));
+    } catch (err) {
+      const msg = err?.message || "Erro ao gerar relatório";
+      setError(msg);
+    } finally {
+      setLoading(false);
     }
-    if (cur) stopsList.push(cur);
-    // map with names
-    return stopsList.map(s => {
-      const device = devices.find(d => d.id === Number(s.deviceId)) || {};
-      return {
-        deviceId: s.deviceId,
-        vehicle: device.name || device.uniqueId || `#${s.deviceId}`,
-        start: s.start,
-        end: s.end,
-        duration: s.start && s.end ? msToDuration(new Date(s.end) - new Date(s.start)) : "-",
-        lat: s.lat,
-        lon: s.lon
-      };
+  };
+
+  useEffect(() => {
+    if (activeTab !== "resumo" && selectedDevice) {
+      handleGenerate(activeTab);
+    }
+  }, [activeTab, selectedDevice, fromDate, toDate]);
+
+  const selectedDeviceName = useMemo(() => {
+    const found = devices.find((d) => d.id === Number(selectedDevice));
+    return found?.name || found?.uniqueId || "Dispositivo";
+  }, [devices, selectedDevice]);
+
+  const routeStats = useMemo(() => {
+    const routeRaw = dataByType?.route?.raw || [];
+    if (!routeRaw.length) return null;
+
+    const sorted = [...routeRaw].sort((a, b) => {
+      const ta = new Date(a.serverTime || a.deviceTime || a.fixTime || a.time).getTime();
+      const tb = new Date(b.serverTime || b.deviceTime || b.fixTime || b.time).getTime();
+      return ta - tb;
     });
-  }, [filteredPositions, devices]);
 
-  // Eventos simples: transformar attributes (excesso de velocidade, ignition off/on, etc)
-  const events = useMemo(() => {
-    const ev = [];
-    for (const p of filteredPositions) {
-      const attrs = p.attributes || {};
-      if (attrs.alarm) {
-        ev.push({ id: p.id, deviceId: p.deviceId, vehicle: (devices.find(d=>d.id===p.deviceId)?.name||p.deviceId), type: attrs.alarm, time: p.serverTime || p.fixTime || p.time });
+    const getDistVal = (item) => {
+      const val = item?.attributes?.distance ?? item?.distance ?? item?.attributes?.totalDistance;
+      const num = Number(val);
+      return Number.isNaN(num) ? null : num;
+    };
+
+    const haversine = (lat1, lon1, lat2, lon2) => {
+      const toRad = (v) => (v * Math.PI) / 180;
+      const R = 6371e3;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    };
+
+    let totalDistMeters = 0;
+    let maxSpeed = 0;
+    let stoppedMs = 0;
+
+    for (let i = 0; i < sorted.length; i++) {
+      const curr = sorted[i];
+      const next = sorted[i + 1];
+      const distVal = getDistVal(curr);
+      if (distVal != null) {
+        totalDistMeters += distVal;
+      } else if (
+        curr?.latitude != null && curr?.longitude != null &&
+        next?.latitude != null && next?.longitude != null
+      ) {
+        totalDistMeters += haversine(curr.latitude, curr.longitude, next.latitude, next.longitude);
       }
-      // limite de velocidade (exemplo): caso speed > 80
-      if ((p.speed || 0) > 80) {
-        ev.push({ id: `spd-${p.id}`, deviceId: p.deviceId, vehicle: devices.find(d=>d.id===p.deviceId)?.name || p.deviceId, type: "Excesso de Velocidade", time: p.serverTime || p.fixTime || p.time, speed: p.speed });
+
+      const speedVal = Number(curr?.speed);
+      if (!Number.isNaN(speedVal)) {
+        maxSpeed = Math.max(maxSpeed, speedVal);
+      }
+
+      if (speedVal === 0 && next) {
+        const t1 = new Date(curr.serverTime || curr.deviceTime || curr.fixTime || curr.time).getTime();
+        const t2 = new Date(next.serverTime || next.deviceTime || next.fixTime || next.time).getTime();
+        if (!Number.isNaN(t1) && !Number.isNaN(t2) && t2 > t1) {
+          stoppedMs += (t2 - t1);
+        }
       }
     }
-    return ev;
-  }, [filteredPositions, devices]);
 
-  // histórico = filteredPositions com colunas úteis
-  const history = useMemo(() => filteredPositions.map(p => ({
-    time: p.serverTime || p.fixTime || p.time,
-    deviceId: p.deviceId,
-    vehicle: devices.find(d=>d.id===p.deviceId)?.name || p.deviceId,
-    lat: p.latitude,
-    lon: p.longitude,
-    speed: p.speed || 0,
-    address: p.address || "-"
-  })), [filteredPositions, devices]);
+    const firstTime = new Date(sorted[0].serverTime || sorted[0].deviceTime || sorted[0].fixTime || sorted[0].time).getTime();
+    const lastTime = new Date(sorted[sorted.length - 1].serverTime || sorted[sorted.length - 1].deviceTime || sorted[sorted.length - 1].fixTime || sorted[sorted.length - 1].time).getTime();
+    const totalTimeMs = (!Number.isNaN(firstTime) && !Number.isNaN(lastTime) && lastTime > firstTime) ? (lastTime - firstTime) : 0;
 
-  // charts: viagens por dia (contagem)
-  const tripsByDay = useMemo(() => {
-    const map = {};
-    for (const t of trips) {
-      const day = (t.start ? new Date(t.start).toLocaleDateString() : "N/A");
-      map[day] = (map[day] || 0) + 1;
-    }
-    return Object.keys(map).map(k => ({ day: k, trips: map[k] }));
-  }, [trips]);
+    const totalDistKm = totalDistMeters / 1000;
+    const totalTimeHours = totalTimeMs / (1000 * 60 * 60);
+    const avgSpeed = totalTimeHours > 0 ? (totalDistKm / totalTimeHours) : 0;
 
-  function msToDuration(ms) {
-    if (!ms || ms <= 0) return "-";
-    const s = Math.floor(ms/1000);
-    const h = Math.floor(s/3600);
-    const m = Math.floor((s%3600)/60);
-    return `${h}h ${m}m`;
-  }
+    const formatHm = (ms) => {
+      const totalMinutes = Math.floor(ms / 60000);
+      const h = Math.floor(totalMinutes / 60);
+      const m = totalMinutes % 60;
+      if (h <= 0) return `${m} min`;
+      return `${h}h ${m}min`;
+    };
 
-  // ---- EXPORT FUNCTIONS ----
-  const exportTableToXlsx = (rows, filename = "report.xlsx") => {
-    // rows: array of objects or arrays
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Report");
-    const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-    saveAs(new Blob([wbout], { type: "application/octet-stream" }), filename);
-  };
+    return {
+      totalDistanceKm: totalDistKm.toFixed(1),
+      totalTime: formatHm(totalTimeMs),
+      maxSpeed: `${Math.round(maxSpeed)} km/h`,
+      avgSpeed: `${avgSpeed.toFixed(1)} km/h`,
+      stopped: formatHm(stoppedMs),
+    };
+  }, [dataByType]);
 
-  const exportDivToPdf = async (elementId = "report-area", filename = "report.pdf") => {
-    const el = document.getElementById(elementId);
-    if (!el) {
-      alert("Elemento de exportação não encontrado.");
-      return;
-    }
-    const canvas = await html2canvas(el, { scale: 2 });
-    const imgData = canvas.toDataURL("image/png");
-    const pdf = new jsPDF({
-      orientation: "landscape",
-      unit: "pt",
-      format: [canvas.width, canvas.height]
-    });
-    pdf.addImage(imgData, "PNG", 0, 0, canvas.width, canvas.height);
-    pdf.save(filename);
-  };
-
-  // helper para exportar a aba atual em formato tabular
-  const getCurrentTabRows = () => {
-    switch(activeTab) {
-      case "rotas": return routes.map(r => ({ ID: r.deviceId, Veículo: r.deviceName, Início: r.startTime ? formatDateTime(r.startTime) : "-", Fim: r.endTime ? formatDateTime(r.endTime) : "-", Distância_km: r.distanceKm }));
-      case "viagens": return trips.map(t => ({ ID: t.id, Veículo: t.vehicle, Início: t.start ? formatDateTime(t.start) : "-", Fim: t.end ? formatDateTime(t.end) : "-", Duração: t.duration }));
-      case "paradas": return stops.map((s, i) => ({ ID: i+1, Veículo: s.vehicle, Início: s.start ? formatDateTime(s.start) : "-", Fim: s.end ? formatDateTime(s.end) : "-", Duração: s.duration }));
-      case "historico": return history.map(h => ({ Data: formatDateTime(h.time), Veículo: h.vehicle, Lat: h.lat, Lon: h.lon, Velocidade: h.speed }));
-      case "eventos": return events.map(e => ({ ID: e.id, Tipo: e.type, Veículo: e.vehicle, Horário: e.time, Velocidade: e.speed || "-" }));
-      default: return [];
-    }
-  };
-
-  if (loading) return <div className="p-6">Carregando relatórios...</div>;
+  const currentRows = dataByType[activeTab]?.rows || [];
+  const mapPoints = dataByType.route?.mapPoints || [];
 
   return (
-    <div className="w-full h-full">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold text-sky-700">Relatórios</h1>
+    <div className="p-4 space-y-4">
+      <div className="bg-white shadow rounded-2xl p-4 border border-slate-100">
+        <h1 className="text-2xl font-bold text-sky-700 mb-4">Relatórios</h1>
 
-        <div className="flex items-center gap-3">
-          <label className="text-sm text-gray-600">Veículo</label>
-          <select className="px-2 py-1 border rounded" value={vehicleFilter} onChange={(e)=>setVehicleFilter(e.target.value)}>
-            <option value="all">Todos</option>
-            {devices.map(d => <option key={d.id} value={d.id}>{d.name || d.uniqueId}</option>)}
-          </select>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-slate-500">Dispositivo</label>
+            <select
+              value={selectedDevice}
+              onChange={(e) => setSelectedDevice(e.target.value)}
+              className="border rounded-lg px-3 py-2 focus:outline-none focus:ring focus:ring-sky-200"
+              required
+            >
+              <option value="">Selecione</option>
+              {devices.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name || d.uniqueId || `ID ${d.id}`}
+                </option>
+              ))}
+            </select>
+          </div>
 
-          <label className="text-sm text-gray-600">De</label>
-          <input type="date" className="px-2 py-1 border rounded" value={fromDate} onChange={(e)=>setFromDate(e.target.value)} />
-          <label className="text-sm text-gray-600">Até</label>
-          <input type="date" className="px-2 py-1 border rounded" value={toDate} onChange={(e)=>setToDate(e.target.value)} />
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-slate-500">Data inicial</label>
+            <input
+              type="datetime-local"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              className="border rounded-lg px-3 py-2 focus:outline-none focus:ring focus:ring-sky-200"
+              required
+            />
+          </div>
 
-          <div className="flex items-center gap-2">
-            <button onClick={()=>{ setFromDate(()=>{ const d=new Date(); d.setDate(d.getDate()-7); return d.toISOString().slice(0,10); }); setToDate(todayISO()); }} className="px-3 py-1 bg-white border rounded">Últimos 7d</button>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-slate-500">Data final</label>
+            <input
+              type="datetime-local"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              className="border rounded-lg px-3 py-2 focus:outline-none focus:ring focus:ring-sky-200"
+              required
+            />
+          </div>
+
+          <div className="flex items-end">
+            <button
+              type="button"
+              onClick={() => handleGenerate(activeTab)}
+              disabled={loading}
+              className="bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white px-6 py-2 rounded-lg transition w-full"
+            >
+              {loading ? "Gerando..." : "Gerar"}
+            </button>
           </div>
         </div>
+
+        {error && <div className="text-red-600 text-sm mt-2">{error}</div>}
       </div>
 
-      {/* EXPORT / TABS */}
-      <div className="flex items-center justify-between gap-4 mb-4">
-        <div className="flex items-center gap-2 bg-white p-2 rounded shadow">
-          <button onClick={() => { const rows = getCurrentTabRows(); exportTableToXlsx(rows, `${activeTab}_report.xlsx`); }} className="px-3 py-1 flex items-center gap-2 bg-sky-600 text-white rounded">
-            <Download size={14} /> Exportar XLSX
-          </button>
-
-          <button onClick={() => exportDivToPdf("report-area", `${activeTab}_report.pdf`)} className="px-3 py-1 flex items-center gap-2 border rounded">
-            <Download size={14} /> Exportar PDF
-          </button>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {["rotas","viagens","paradas","historico","eventos"].map(t => (
-            <button key={t} onClick={()=>{setActiveTab(t); setActiveTab(t);}} className={`px-3 py-1 rounded ${activeTab===t ? "bg-sky-600 text-white" : "bg-white border"}`}>
-              {t==="rotas" && "Rotas"}
-              {t==="viagens" && "Viagens"}
-              {t==="paradas" && "Paradas"}
-              {t==="historico" && "Histórico"}
-              {t==="eventos" && "Eventos"}
+      <div className="bg-white shadow rounded-2xl p-2 border border-slate-100">
+        <div className="flex flex-wrap gap-2 p-2">
+          {tabs.map((tab) => (
+            <button
+              key={tab.value}
+              onClick={() => setActiveTab(tab.value)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium border transition ${
+                activeTab === tab.value
+                  ? "bg-sky-600 text-white border-sky-600"
+                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+              }`}
+            >
+              {tab.label}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Area do relatório (exportável por PDF) */}
-      <div id="report-area" className="bg-white rounded-2xl p-4 border shadow">
-        {/* Painel superior: gráficos */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-          <div className="p-3 border rounded">
-            <h3 className="text-sm text-gray-600">Viagens por dia</h3>
-            <div style={{ width: "100%", height: 120 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={tripsByDay}>
-                  <XAxis dataKey="day" />
-                  <YAxis />
-                  <Tooltip />
-                  <Bar dataKey="trips" fill="#0284c7" />
-                </BarChart>
-              </ResponsiveContainer>
+      {activeTab === "route" && mapPoints.length > 0 && (
+        <div className="bg-white shadow rounded-2xl p-4 border border-slate-100">
+          <h2 className="text-lg font-semibold text-slate-700 mb-2">Mapa - {selectedDeviceName}</h2>
+          <div className="h-96 rounded-lg overflow-hidden border">
+            <MapContainer center={mapPoints[0]} zoom={13} style={{ height: "100%", width: "100%" }}>
+              <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+              <Polyline positions={mapPoints} color="blue" weight={4} />
+              <Marker position={mapPoints[0]}>
+                <Popup>Início</Popup>
+              </Marker>
+              <Marker position={mapPoints[mapPoints.length - 1]} icon={L.icon({
+                iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+                shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+                className: "end-marker",
+              })}>
+                <Popup>Fim</Popup>
+              </Marker>
+            </MapContainer>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "resumo" && routeStats && (
+        <div className="bg-white shadow rounded-2xl p-4 border border-slate-100">
+          <h2 className="text-lg font-semibold text-slate-700 mb-4">Resumo da Viagem</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 text-sm text-slate-700">
+            <div className="bg-slate-50 rounded-lg p-3">
+              <div className="text-xs text-slate-500">Distância total</div>
+              <div className="text-lg font-semibold">{routeStats.totalDistanceKm} km</div>
+            </div>
+            <div className="bg-slate-50 rounded-lg p-3">
+              <div className="text-xs text-slate-500">Tempo total</div>
+              <div className="text-lg font-semibold">{routeStats.totalTime}</div>
+            </div>
+            <div className="bg-slate-50 rounded-lg p-3">
+              <div className="text-xs text-slate-500">Velocidade máxima</div>
+              <div className="text-lg font-semibold">{routeStats.maxSpeed}</div>
+            </div>
+            <div className="bg-slate-50 rounded-lg p-3">
+              <div className="text-xs text-slate-500">Velocidade média</div>
+              <div className="text-lg font-semibold">{routeStats.avgSpeed}</div>
+            </div>
+            <div className="bg-slate-50 rounded-lg p-3">
+              <div className="text-xs text-slate-500">Tempo parado</div>
+              <div className="text-lg font-semibold">{routeStats.stopped}</div>
             </div>
           </div>
+        </div>
+      )}
 
-          <div className="p-3 border rounded">
-            <h3 className="text-sm text-gray-600">Total de viagens</h3>
-            <div className="text-3xl font-bold text-sky-700">{trips.length}</div>
-            <div className="text-sm text-gray-500">Período selecionado</div>
-          </div>
+      {(activeTab === "route" || activeTab === "trips" || activeTab === "stops" || activeTab === "events") && (
+        <div className="bg-white shadow rounded-2xl p-4 border border-slate-100">
+          <h2 className="text-lg font-semibold text-slate-700 mb-2">
+            {tabs.find((t) => t.value === activeTab)?.label}
+          </h2>
 
-          <div className="p-3 border rounded">
-            <h3 className="text-sm text-gray-600">Eventos detectados</h3>
-            <div className="text-3xl font-bold text-red-600">{events.length}</div>
-            <div className="text-sm text-gray-500">Inclui alarmes e excesso de velocidade</div>
+          {!loading && generatedTypes[activeTab] && currentRows.length === 0 && (
+            <div className="text-slate-500 text-sm">Nenhum registro no período selecionado.</div>
+          )}
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-left text-slate-500 border-b">
+                  <th className="py-2 pr-4">Horário</th>
+                  <th className="py-2 pr-4">Endereço / Coordenadas</th>
+                  <th className="py-2 pr-4">Velocidade</th>
+                  <th className="py-2 pr-4">Distância</th>
+                  <th className="py-2 pr-4">Duração</th>
+                  <th className="py-2 pr-4">Evento</th>
+                </tr>
+              </thead>
+              <tbody>
+                {currentRows.map((row) => (
+                  <tr key={row.id} className="border-b last:border-0">
+                    <td className="py-2 pr-4 whitespace-nowrap">{row.time}</td>
+                    <td className="py-2 pr-4">{row.address}</td>
+                    <td className="py-2 pr-4">{row.speed}</td>
+                    <td className="py-2 pr-4">{row.distance}</td>
+                    <td className="py-2 pr-4">{row.duration}</td>
+                    <td className="py-2 pr-4">{row.event}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
-
-        {/* Conteúdo da aba */}
-        <div>
-          {activeTab === "rotas" && (
-            <SimpleTable
-              columns={["Veículo", "Início", "Fim", "Pontos", "Distância (km)"]}
-              rows={routes.map(r=>[r.deviceName, r.startTime?formatDateTime(r.startTime):"-", r.endTime?formatDateTime(r.endTime):"-", r.points, r.distanceKm])}
-            />
-          )}
-
-          {activeTab === "viagens" && (
-            <SimpleTable
-              columns={["Veículo", "Início", "Fim", "Duração", "Pontos"]}
-              rows={trips.map(t=>[t.vehicle, t.start?formatDateTime(t.start):"-", t.end?formatDateTime(t.end):"-", t.duration, t.points])}
-            />
-          )}
-
-          {activeTab === "paradas" && (
-            <SimpleTable
-              columns={["Veículo", "Início", "Fim", "Duração", "Lat", "Lon"]}
-              rows={stops.map(s=>[s.vehicle, s.start?formatDateTime(s.start):"-", s.end?formatDateTime(s.end):"-", s.duration, s.lat, s.lon])}
-            />
-          )}
-
-          {activeTab === "historico" && (
-            <SimpleTable
-              columns={["Data", "Veículo", "Lat", "Lon", "Velocidade"]}
-              rows={history.map(h=>[formatDateTime(h.time), h.vehicle, h.lat, h.lon, h.speed])}
-            />
-          )}
-
-          {activeTab === "eventos" && (
-            <SimpleTable
-              columns={["Tipo", "Veículo", "Horário", "Detalhes"]}
-              rows={events.map(e=>[e.type, e.vehicle, e.time?formatDateTime(e.time):"-", e.speed?`Vel ${e.speed} km/h`:""])}
-            />
-          )}
-        </div>
-      </div>
+      )}
     </div>
   );
 }
-
-/* -------------------- SimpleTable component -------------------- */
-function SimpleTable({ columns = [], rows = [] }) {
-  return (
-    <div className="overflow-auto mt-4 rounded">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50 sticky top-0">
-          <tr>
-            {columns.map((c) => (
-              <th key={c} className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                {c}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="bg-white divide-y divide-gray-100">
-          {rows.length === 0 && (
-            <tr>
-              <td className="px-4 py-4 text-sm text-gray-500" colSpan={columns.length}>
-                Nenhum registro encontrado no período selecionado.
-              </td>
-            </tr>
-          )}
-          {rows.map((r, i) => (
-            <tr key={i} className="hover:bg-gray-50">
-              {r.map((cell, j) => (
-                <td key={j} className="px-4 py-3 text-sm text-gray-700">{cell}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-

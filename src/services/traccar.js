@@ -22,3 +22,21 @@ export async function getPositions() {
     return [];
   }
 }
+
+// ➤ Relatórios oficiais do Traccar (route, trips, stops, events)
+const reportEndpoints = {
+  route: "/reports/route",
+  trips: "/reports/trips",
+  stops: "/reports/stops",
+  events: "/reports/events",
+};
+
+export async function runReport(type, deviceId, from, to) {
+  if (!reportEndpoints[type]) {
+    throw new Error(`Tipo de relatório inválido: ${type}`);
+  }
+  const res = await api.get(reportEndpoints[type], {
+    params: { deviceId, from, to },
+  });
+  return res.data;
+}
