@@ -1,20 +1,21 @@
 // src/App.jsx
 
-import React, { useState } from "react";
+import React from "react";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
+import { useAuth } from "./context/AuthContext";
 
 export default function App() {
-  const [user, setUser] = useState(false);
+  const { user, authHeader, loading } = useAuth();
+  const isAuthenticated = Boolean(user && authHeader);
 
-  return (
-    <>
-      {!user ? (
-        <Login onSuccess={() => setUser(true)} />
-      ) : (
-        <Dashboard />
-      )}
-    </>
-  );
+  if (loading && authHeader) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-100 text-slate-600">
+        Validando sessão...
+      </div>
+    );
+  }
+
+  return isAuthenticated ? <Dashboard /> : <Login />;
 }
-
