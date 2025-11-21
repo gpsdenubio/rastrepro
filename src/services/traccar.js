@@ -40,3 +40,50 @@ export async function runReport(type, deviceId, from, to) {
   });
   return res.data;
 }
+
+// ➤ CRUD de dispositivos (attributes somente com modelo, placa, linha)
+export async function createDevice(data) {
+  const payload = {
+    name: data.name,
+    uniqueId: data.uniqueId,
+    model: data.model,
+    category: data.category,
+    phone: data.phone,
+    attributes: {
+      modelo: data.model,
+      placa: data.plate,
+      linha: data.phone,
+    },
+  };
+  const res = await api.post("/devices", payload);
+  return res.data;
+}
+
+export async function updateDevice(id, data) {
+  const prev = data.attributes || {};
+  const pick = (val, fallback) =>
+    val !== undefined && val !== null && val !== "" ? val : (fallback ?? "");
+
+  const payload = {
+    id: data.id ?? id,
+    name: data.name,
+    uniqueId: data.uniqueId,
+    model: data.model,
+    category: data.category,
+    phone: data.phone,
+    groupId: data.groupId ?? null,
+    calendarId: data.calendarId ?? null,
+    attributes: {
+      modelo: pick(data.model, prev.modelo),
+      placa: pick(data.plate, prev.placa),
+      linha: pick(data.phone, prev.linha),
+    },
+  };
+  const res = await api.put(`/devices/${id}`, payload);
+  return res.data;
+}
+
+export async function deleteDevice(id) {
+  const res = await api.delete(`/devices/${id}`);
+  return res.data;
+}
