@@ -1,11 +1,18 @@
 // src/components/Sidebar.jsx
 import React from "react";
-import { Home, MapPin, List, Bell, LogOut } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Home, MapPin, List, Bell, LogOut, Users, FileText } from "lucide-react";
+import { useAuth } from "../context/AuthContext";
 
-export default function Sidebar({ open, onNavigate }) {
+export default function Sidebar({ open }) {
+  const { logout } = useAuth();
+
+  const itemClass =
+    "w-full flex items-center gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 mt-1";
+
   return (
     <aside
-      className={`fixed left-0 top-0 h-full bg-white dark:bg-gray-900 border-r dark:border-gray-800 z-40 transition-all ${
+      className={`flex-shrink-0 h-screen bg-white border-r transition-all ${
         open ? "w-64" : "w-16"
       }`}
     >
@@ -17,49 +24,47 @@ export default function Sidebar({ open, onNavigate }) {
       </div>
 
       <nav className="mt-4 px-2">
-        <button
-          onClick={() => onNavigate("dashboard")}
-          className="w-full flex items-center gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
-        >
-          <Home size={18} />
-          {open && <span>Dashboard</span>}
-        </button>
-
-        <button
-          onClick={() => onNavigate("devices")}
-          className="w-full flex items-center gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 mt-1"
-        >
-          <List size={18} />
-          {open && <span>Veículos</span>}
-        </button>
-
-        <button
-          onClick={() => onNavigate("map")}
-          className="w-full flex items-center gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 mt-1"
-        >
+        <Link to="/map" className={itemClass.replace(" mt-1", "")}>
           <MapPin size={18} />
           {open && <span>Mapa</span>}
-        </button>
+        </Link>
 
-        <button
-          onClick={() => onNavigate("alerts")}
-          className="w-full flex items-center gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 mt-1"
-        >
+        <Link to="/devices" className={itemClass}>
+          <List size={18} />
+          {open && <span>Veículos</span>}
+        </Link>
+
+        <Link to="/users" className={itemClass}>
+          <Users size={18} />
+          {open && <span>Usuários</span>}
+        </Link>
+
+        <Link to="/reports" className={itemClass}>
+          <FileText size={18} />
+          {open && <span>Relatórios</span>}
+        </Link>
+
+        <Link to="/dashboard" className={itemClass}>
+          <Home size={18} />
+          {open && <span>Dashboard</span>}
+        </Link>
+
+        <Link to="/alerts" className={itemClass}>
           <Bell size={18} />
           {open && <span>Alertas</span>}
-        </button>
+        </Link>
       </nav>
 
       <div className="absolute bottom-4 w-full px-2">
-        <button
-          onClick={() => onNavigate("logout")}
+        <Link
+          to="/logout"
+          onClick={logout}
           className="w-full flex items-center gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
         >
           <LogOut size={18} />
           {open && <span>Sair</span>}
-        </button>
+        </Link>
       </div>
     </aside>
   );
 }
-

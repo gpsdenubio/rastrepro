@@ -274,7 +274,7 @@ export default function Reports() {
   const mapPoints = dataByType.route?.mapPoints || [];
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-4 space-y-4 bg-white">
       <div className="bg-white shadow rounded-2xl p-4 border border-slate-100">
         <h1 className="text-2xl font-bold text-sky-700 mb-4">Relatórios</h1>
 

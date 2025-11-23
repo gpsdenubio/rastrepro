@@ -27,20 +27,28 @@ export function AuthProvider({ children }) {
   }, []);
 
   const fetchUser = useCallback(async (loginName) => {
-    const res = await api.get("/users");
-    const list = Array.isArray(res.data) ? res.data : [];
-    if (!list.length) return null;
-    if (loginName) {
-      const match = list.find(
-        (u) =>
-          u.name === loginName ||
-          u.login === loginName ||
-          u.username === loginName ||
-          u.email === loginName
-      );
-      if (match) return match;
+    try {
+      const res = await api.get("/users");
+      const list = Array.isArray(res.data) ? res.data : [];
+      if (!list.length) return loginName ? { name: loginName, username: loginName } : null;
+      if (loginName) {
+        const match = list.find(
+          (u) =>
+            u.name === loginName ||
+            u.login === loginName ||
+            u.username === loginName ||
+            u.email === loginName
+        );
+        if (match) return match;
+      }
+      return list[0];
+    } catch (err) {
+      console.warn("Não foi possível obter /users, usando fallback local:", err?.message);
+      if (loginName) {
+        return { name: loginName, username: loginName, admin: false };
+      }
+      return { name: "Usuário", username: "user", admin: false };
     }
-    return list[0];
   }, []);
 
   const loadSession = useCallback(async () => {

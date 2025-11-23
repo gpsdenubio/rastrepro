@@ -1,54 +1,41 @@
 import React, { useEffect, useState } from "react";
-import { createDevice, updateDevice } from "../services/traccar";
+import { createUser, updateUser } from "../services/traccar";
 
-const categories = [
-  { value: "car", label: "Carro" },
-  { value: "motorcycle", label: "Moto" },
-  { value: "truck", label: "Caminhão" },
-  { value: "pickup", label: "Caminhonete" },
-  { value: "bus", label: "Ônibus" },
-  { value: "boat", label: "Barco" },
-  { value: "van", label: "Van" },
-  { value: "person", label: "Pessoa" },
-  { value: "animal", label: "Animal" },
-  { value: "other", label: "Outro" },
-];
-
-export default function DeviceModal({ open, onClose, onSaved, device }) {
-  const isEdit = Boolean(device?.id);
+export default function UserModal({ open, onClose, onSaved, user }) {
+  const isEdit = Boolean(user?.id);
   const [form, setForm] = useState({
     name: "",
-    uniqueId: "",
-    model: "",
-    category: "car",
-    plate: "",
+    email: "",
     phone: "",
+    admin: false,
+    disabled: false,
+    password: "",
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (device) {
+    if (user) {
       setForm({
-        name: device.name || "",
-        uniqueId: device.uniqueId || "",
-        model: device.attributes?.modelo || device.model || "",
-        category: device.category || "car",
-        plate: device.attributes?.placa || "",
-        phone: device.attributes?.linha || device.phone || "",
+        name: user.name || "",
+        email: user.email || "",
+        phone: user.phone || "",
+        admin: Boolean(user.admin),
+        disabled: Boolean(user.disabled),
+        password: "",
       });
     } else {
       setForm({
         name: "",
-        uniqueId: "",
-        model: "",
-        category: "car",
-        plate: "",
+        email: "",
         phone: "",
+        admin: false,
+        disabled: false,
+        password: "",
       });
     }
     setError("");
-  }, [device, open]);
+  }, [user, open]);
 
   const handleChange = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -59,22 +46,17 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
     setSaving(true);
     setError("");
     try {
-      const payload = {
-        ...form,
-        id: device?.id,
-        groupId: device?.groupId,
-        calendarId: device?.calendarId,
-        attributes: device?.attributes,
-      };
+      const payload = { ...form };
+      if (!payload.password) delete payload.password;
       if (isEdit) {
-        await updateDevice(device.id, payload);
+        await updateUser(user.id, payload);
       } else {
-        await createDevice(form);
+        await createUser(payload);
       }
-      onSaved();
+      onSaved?.();
       onClose();
     } catch (err) {
-      const msg = err?.response?.data || err?.message || "Erro ao salvar";
+      const msg = err?.response?.data || err?.message || "Erro ao salvar usuário";
       setError(typeof msg === "string" ? msg : JSON.stringify(msg));
     } finally {
       setSaving(false);
@@ -85,12 +67,14 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl p-6">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold text-slate-800">
-            {isEdit ? "Editar dispositivo" : "Novo dispositivo"}
+            {isEdit ? "Editar usuário" : "Novo usuário"}
           </h2>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-700">✕</button>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-700">
+            ✕
+          </button>
         </div>
 
         {error && (
@@ -111,49 +95,51 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
               />
             </label>
             <label className="flex flex-col text-sm">
-              IMEI (uniqueId)
+              Email
               <input
-                value={form.uniqueId}
-                onChange={(e) => handleChange("uniqueId", e.target.value)}
-                className="mt-1 border rounded-lg px-3 py-2"
-                required
-              />
-            </label>
-            <label className="flex flex-col text-sm">
-              Modelo
-              <input
-                value={form.model}
-                onChange={(e) => handleChange("model", e.target.value)}
+                type="email"
+                value={form.email}
+                onChange={(e) => handleChange("email", e.target.value)}
                 className="mt-1 border rounded-lg px-3 py-2"
               />
             </label>
             <label className="flex flex-col text-sm">
-              Categoria
-              <select
-                value={form.category}
-                onChange={(e) => handleChange("category", e.target.value)}
-                className="mt-1 border rounded-lg px-3 py-2"
-              >
-                {categories.map((c) => (
-                  <option key={c.value} value={c.value}>{c.label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col text-sm">
-              Placa
-              <input
-                value={form.plate}
-                onChange={(e) => handleChange("plate", e.target.value)}
-                className="mt-1 border rounded-lg px-3 py-2"
-              />
-            </label>
-            <label className="flex flex-col text-sm">
-              Linha telefônica
+              Telefone
               <input
                 value={form.phone}
                 onChange={(e) => handleChange("phone", e.target.value)}
                 className="mt-1 border rounded-lg px-3 py-2"
               />
+            </label>
+            <label className="flex flex-col text-sm">
+              Senha {isEdit ? "(opcional)" : "(obrigatória)"}
+              <input
+                type="password"
+                value={form.password}
+                onChange={(e) => handleChange("password", e.target.value)}
+                className="mt-1 border rounded-lg px-3 py-2"
+                required={!isEdit}
+              />
+            </label>
+          </div>
+
+          <div className="flex items-center gap-6 pt-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={form.admin}
+                onChange={(e) => handleChange("admin", e.target.checked)}
+              />
+              Administrador
+            </label>
+
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={form.disabled}
+                onChange={(e) => handleChange("disabled", e.target.checked)}
+              />
+              Usuário inativo
             </label>
           </div>
 

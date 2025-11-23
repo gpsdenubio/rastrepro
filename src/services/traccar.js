@@ -87,3 +87,70 @@ export async function deleteDevice(id) {
   const res = await api.delete(`/devices/${id}`);
   return res.data;
 }
+
+// ➤ Usuários
+export async function getUsers() {
+  try {
+    const res = await api.get("/users");
+    return res.data;
+  } catch (err) {
+    console.error("Erro ao obter usuários:", err);
+    return [];
+  }
+}
+
+export async function getPermissions() {
+  try {
+    const res = await api.get("/permissions");
+    return res.data;
+  } catch (err) {
+    console.error("Erro ao obter permissões:", err);
+    return [];
+  }
+}
+
+export async function createUser(data) {
+  const payload = {
+    name: data.name,
+    email: data.email,
+    phone: data.phone,
+    admin: Boolean(data.admin),
+    disabled: Boolean(data.disabled),
+    password: data.password,
+  };
+  const res = await api.post("/users", payload);
+  return res.data;
+}
+
+export async function updateUser(id, data) {
+  const payload = {
+    id,
+    name: data.name,
+    email: data.email,
+    phone: data.phone,
+    admin: Boolean(data.admin),
+    disabled: Boolean(data.disabled),
+    // Só envia senha se informada
+    ...(data.password ? { password: data.password } : {}),
+  };
+  const res = await api.put(`/users/${id}`, payload);
+  return res.data;
+}
+
+export async function deleteUser(id) {
+  const res = await api.delete(`/users/${id}`);
+  return res.data;
+}
+
+// ➤ Permissões de usuário/dispositivo
+export async function addUserDevicePermission(userId, deviceId) {
+  const res = await api.post("/permissions", { userId, deviceId });
+  return res.data;
+}
+
+export async function removeUserDevicePermission(userId, deviceId) {
+  const res = await api.delete("/permissions", {
+    params: { userId, deviceId },
+  });
+  return res.data;
+}
