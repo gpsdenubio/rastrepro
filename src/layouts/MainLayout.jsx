@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import { Outlet } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import TopBar from "../components/TopBar";
+import EventToasts from "../components/EventToasts";
 
 export default function MainLayout({ children }) {
   const [open, setOpen] = useState(true);
@@ -16,6 +17,7 @@ export default function MainLayout({ children }) {
         <main className="p-4 flex-1 overflow-auto">
           {children || <Outlet />}
         </main>
+        <EventToasts />
       </div>
     </div>
   );

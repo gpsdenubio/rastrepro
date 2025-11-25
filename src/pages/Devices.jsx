@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import DeviceModal from "../components/DeviceModal";
 import DeleteDeviceModal from "../components/DeleteDeviceModal";
 import { getDevices } from "../services/traccar";
+import DeviceBlockActions from "../components/DeviceBlockActions";
 
 const categoryIcon = (cat) => {
   const map = {
@@ -91,11 +92,11 @@ export default function Devices() {
 
       {error && <div className="text-red-600 text-sm">{error}</div>}
 
-      <div className="bg-white shadow rounded-2xl border border-slate-100 overflow-hidden">
+      <div className="bg-white shadow-sm rounded-2xl border border-slate-100 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
-              <tr className="text-left text-slate-500 border-b">
+              <tr className="text-left text-slate-500 border-b border-slate-100">
                 <th className="py-3 px-4"> </th>
                 <th className="py-3 px-4">Nome</th>
                 <th className="py-3 px-4">IMEI</th>
@@ -106,9 +107,10 @@ export default function Devices() {
                 <th className="py-3 px-4">Status</th>
                 <th className="py-3 px-4">Última atualização</th>
                 <th className="py-3 px-4 text-right">Ações</th>
+                <th className="py-3 px-4 text-right">Bloqueio</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="[&>tr]:border-b [&>tr]:border-slate-100">
               {loading ? (
                 <tr>
                   <td className="py-4 px-4" colSpan={10}>Carregando...</td>
@@ -119,7 +121,7 @@ export default function Devices() {
                 </tr>
               ) : (
                 tableRows.map((d) => (
-                  <tr key={d.id} className="border-b last:border-0">
+                    <tr key={d.id} className="last:border-0">
                     <td className="py-3 px-4 text-lg">{d.categoryIcon}</td>
                     <td className="py-3 px-4 font-semibold text-slate-800">{d.name}</td>
                     <td className="py-3 px-4">{d.uniqueId}</td>
@@ -152,6 +154,9 @@ export default function Devices() {
                       >
                         Excluir
                       </button>
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <DeviceBlockActions device={d} />
                     </td>
                   </tr>
                 ))

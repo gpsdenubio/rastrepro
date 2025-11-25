@@ -99,9 +99,11 @@ export async function getUsers() {
   }
 }
 
-export async function getPermissions() {
+export async function getPermissions(params = {}) {
   try {
-    const res = await api.get("/permissions");
+    const res = await api.get("/permissions", {
+      params,
+    });
     return res.data;
   } catch (err) {
     console.error("Erro ao obter permissões:", err);
@@ -142,6 +144,35 @@ export async function deleteUser(id) {
   return res.data;
 }
 
+// ➤ Comandos de ignição (bloquear/desbloquear)
+async function sendEngineCommand(deviceId, type) {
+  // Timeout curto para não deixar UI presa caso o dispositivo esteja offline
+  const res = await api.post(
+    "/commands/send",
+    { deviceId, type },
+    { timeout: 7000 }
+  );
+  return res.data;
+}
+
+export async function blockEngine(deviceId) {
+  return sendEngineCommand(deviceId, "engineStop");
+}
+
+export async function unblockEngine(deviceId) {
+  return sendEngineCommand(deviceId, "engineResume");
+}
+
+// ➤ Eventos recentes
+export async function getEvents(params = {}) {
+  try {
+    const res = await api.get("/events", { params });
+    return res.data;
+  } catch (err) {
+    console.error("Erro ao obter eventos:", err);
+    return [];
+  }
+}
 // ➤ Permissões de usuário/dispositivo
 export async function addUserDevicePermission(userId, deviceId) {
   const res = await api.post("/permissions", { userId, deviceId });
@@ -149,8 +180,10 @@ export async function addUserDevicePermission(userId, deviceId) {
 }
 
 export async function removeUserDevicePermission(userId, deviceId) {
+  // Envia tanto no body quanto em query para compatibilidade com o Traccar
   const res = await api.delete("/permissions", {
     params: { userId, deviceId },
+    data: { userId, deviceId },
   });
   return res.data;
 }

@@ -37,7 +37,7 @@ export default function Login() {
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-slate-300">rastrePro</p>
-                <h1 className="text-2xl font-bold text-white leading-tight">Painel de Rastreamento</h1>
+                <h1 className="text-2xl font-bold text-white leading-tight">Plataforma</h1>
               </div>
             </div>
 

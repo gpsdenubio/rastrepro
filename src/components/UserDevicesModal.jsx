@@ -12,23 +12,26 @@ export default function UserDevicesModal({
   assigned = new Set(),
   allowedDevices = [],
   onSaved,
+  onSavedSelection,
 }) {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    setSelectedIds(new Set(assigned));
+    const normalized = new Set(Array.from(assigned || []).map((v) => Number(v)));
+    setSelectedIds(normalized);
     setError("");
   }, [assigned, open, user]);
 
   const handleToggle = (id) => {
+    const normalizedId = Number(id);
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
+      if (next.has(normalizedId)) {
+        next.delete(normalizedId);
       } else {
-        next.add(id);
+        next.add(normalizedId);
       }
       return next;
     });
@@ -44,10 +47,11 @@ export default function UserDevicesModal({
     setLoading(true);
     setError("");
     try {
-      const current = new Set(assigned || []);
-      const next = new Set(selectedIds);
+      const normalizeId = (v) => Number(v);
+      const current = new Set(Array.from(assigned || []).map(normalizeId));
+      const next = new Set(Array.from(selectedIds).map(normalizeId));
 
-      const allowedIds = new Set(sortedDevices.map((d) => d.id));
+      const allowedIds = new Set(sortedDevices.map((d) => Number(d.id)));
       const toAdd = [...next].filter((id) => allowedIds.has(id) && !current.has(id));
       const toRemove = [...current].filter((id) => allowedIds.has(id) && !next.has(id));
 
@@ -56,6 +60,8 @@ export default function UserDevicesModal({
         ...toRemove.map((id) => removeUserDevicePermission(user.id, id)),
       ]);
 
+      const finalSet = new Set(next);
+      onSavedSelection?.(user.id, finalSet);
       onSaved?.();
       onClose();
     } catch (err) {

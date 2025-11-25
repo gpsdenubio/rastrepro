@@ -12,9 +12,11 @@ import UserDevicesModal from "../components/UserDevicesModal";
 const buildPermissionsMap = (list) => {
   return (list || []).reduce((acc, perm) => {
     if (perm?.userId === undefined || perm?.userId === null) return acc;
-    if (!acc[perm.userId]) acc[perm.userId] = new Set();
-    if (perm.deviceId !== undefined && perm.deviceId !== null) {
-      acc[perm.userId].add(perm.deviceId);
+    const uId = Number(perm.userId);
+    const dId = perm.deviceId !== undefined && perm.deviceId !== null ? Number(perm.deviceId) : null;
+    if (!acc[uId]) acc[uId] = new Set();
+    if (dId !== null) {
+      acc[uId].add(dId);
     }
     return acc;
   }, {});
@@ -46,10 +48,13 @@ export default function Users() {
     setLoading(true);
     setError("");
     try {
+      const permParams = isAdmin
+        ? { all: true } // admin enxerga todos os vínculos
+        : { userId: currentUser?.id, type: "userDevice" }; // não-admin vê apenas os seus
       const [userList, deviceList, permissionList] = await Promise.all([
         getUsers(),
         getDevices(),
-        getPermissions(),
+        getPermissions(permParams),
       ]);
       setUsers(Array.isArray(userList) ? userList : []);
       setDevices(Array.isArray(deviceList) ? deviceList : []);
@@ -70,8 +75,8 @@ export default function Users() {
   };
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (currentUser) loadData();
+  }, [currentUser]);
 
   const filteredUsers = useMemo(() => {
     if (!currentUser) return [];
@@ -90,18 +95,12 @@ export default function Users() {
   const canManageUser = (targetUser) => {
     if (!currentUser) return false;
     if (isAdmin) return true;
-    // Usuário com permissão pode gerenciar quem compartilha algum device
-    if (hasIntersection(currentUserDevices, permissionsByUser[targetUser.id] || new Set())) {
-      return true;
-    }
-    // Se o alvo não tem devices ainda, permitir atribuir
-    if ((permissionsByUser[targetUser.id] || new Set()).size === 0 && currentUserDevices.size > 0) {
-      return true;
-    }
-    // Sempre pode gerenciar a si próprio se tiver devices
-    if (targetUser.id === currentUser.id && currentUserDevices.size > 0) {
-      return true;
-    }
+    const targetSet = permissionsByUser[targetUser.id] || new Set();
+    // usuário pode gerenciar quem compartilha device ou a si mesmo
+    if (targetUser.id === currentUser.id) return true;
+    if (hasIntersection(currentUserDevices, targetSet)) return true;
+    // se o alvo não tem devices ainda, permitir atribuir se o atual tiver algum
+    if (targetSet.size === 0 && currentUserDevices.size > 0) return true;
     return false;
   };
 
@@ -131,7 +130,12 @@ export default function Users() {
   };
 
   const totalDevicesFor = (userId) =>
-    permissionsByUser[userId] ? permissionsByUser[userId].size : 0;
+    permissionsByUser[userId] ? Array.from(permissionsByUser[userId]).length : 0;
+
+  const devicesForUser = (userId) => {
+    const ids = permissionsByUser[userId] || new Set();
+    return devices.filter((d) => ids.has(Number(d.id)));
+  };
 
   return (
     <div className="p-4 space-y-4">
@@ -162,8 +166,10 @@ export default function Users() {
                 <th className="py-3 px-4">Telefone</th>
                 <th className="py-3 px-4">Administrador</th>
                 <th className="py-3 px-4">Total de dispositivos</th>
+                <th className="py-3 px-4">Lista</th>
                 <th className="py-3 px-4">Status</th>
                 <th className="py-3 px-4 text-right">Ações</th>
+                <th className="py-3 px-4 text-right">Dispositivos</th>
               </tr>
             </thead>
             <tbody>
@@ -203,6 +209,21 @@ export default function Users() {
                       </td>
                       <td className="py-3 px-4">{totalDevices}</td>
                       <td className="py-3 px-4">
+                        <div className="flex flex-wrap gap-1">
+                          {devicesForUser(u.id).map((dev) => (
+                            <span
+                              key={dev.id}
+                              className="px-2 py-1 rounded-full bg-slate-100 text-slate-700 text-xs"
+                            >
+                              {dev.name || dev.uniqueId || dev.id}
+                            </span>
+                          ))}
+                          {devicesForUser(u.id).length === 0 && (
+                            <span className="text-xs text-slate-400">Nenhum</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4">
                         <span
                           className={`px-2 py-1 rounded-full text-xs font-semibold ${
                             u.disabled
@@ -236,9 +257,23 @@ export default function Users() {
                               onClick={() => handleDevices(u)}
                               className="px-3 py-1 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50"
                             >
-                              Dispositivos
+                              Distribuir
                             </button>
                           </>
+                        ) : (
+                          <span className="text-slate-400 text-xs">
+                            Sem permissão
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        {canManageUser(u) ? (
+                          <button
+                            onClick={() => handleDevices(u)}
+                            className="px-3 py-1 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50"
+                          >
+                            Distribuir dispositivos
+                          </button>
                         ) : (
                           <span className="text-slate-400 text-xs">
                             Sem permissão
@@ -276,6 +311,13 @@ export default function Users() {
         devices={devices}
         allowedDevices={isAdmin ? devices : devices.filter((d) => currentUserDevices.has(d.id))}
         assigned={selectedUser ? permissionsByUser[selectedUser.id] : new Set()}
+        onSavedSelection={(userId, selectedSet) => {
+          // atualiza permissões locais para refletir imediatamente na UI
+          setPermissionsByUser((prev) => ({
+            ...prev,
+            [userId]: new Set(Array.from(selectedSet).map((v) => Number(v))),
+          }));
+        }}
       />
     </div>
   );

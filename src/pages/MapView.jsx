@@ -1,6 +1,6 @@
 // src/pages/MapView.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import { MapContainer, TileLayer, Marker, Popup, Tooltip, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Tooltip, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import { getDevices, getPositions } from "../services/traccar";
@@ -30,17 +30,22 @@ function FitMapView({ positions }) {
 export default function MapView({ onSelectDevice }) {
   const [devices, setDevices] = useState([]);
   const [positions, setPositions] = useState([]);
+  const [baseMap, setBaseMap] = useState(() => {
+    const stored = typeof window !== "undefined" ? localStorage.getItem("baseMap") : null;
+    return stored || "google-road";
+  });
+  const [ignitionCache, setIgnitionCache] = useState({});
 
-  const categoryEmoji = {
-    car: "🚗",
+  const categoryIcon = {
+    car: "🚘",
     motorcycle: "🏍️",
-    truck: "🚚",
-    pickup: "🛻",
-    camionete: "🛻",
+    truck: "🚛",
+    pickup: "🚙",
+    camionete: "🚙",
     van: "🚐",
     bus: "🚌",
-    boat: "⛵",
-    person: "🧍",
+    boat: "🛥️",
+    person: "🚶",
     animal: "🐾",
     other: "📡",
   };
@@ -60,7 +65,7 @@ export default function MapView({ onSelectDevice }) {
   };
 
   const getMarkerIcon = (category) => {
-    const emoji = categoryEmoji[category] || categoryEmoji.other;
+    const emoji = categoryIcon[category] || categoryIcon.other;
     const color = categoryColors[category] || categoryColors.other;
     const html = `<div class="device-marker-mini" style="--marker-color:${color};">${emoji}</div>`;
 
@@ -81,84 +86,138 @@ export default function MapView({ onSelectDevice }) {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 5000);
-    return () => clearInterval(interval);
+
+    let interval = setInterval(loadData, 3000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        loadData();
+        clearInterval(interval);
+        interval = setInterval(loadData, 3000);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, []);
+
+  // Mantém último valor de ignição conhecido por dispositivo
+  useEffect(() => {
+    setIgnitionCache((prev) => {
+      const next = { ...prev };
+      positions.forEach((p) => {
+        if (p?.deviceId == null) return;
+        const raw = p.attributes?.ignition;
+        if (raw === true || raw === false || raw === "true" || raw === "false" || raw === 1 || raw === 0) {
+          const normalized = raw === true || raw === "true" || raw === 1;
+          next[p.deviceId] = normalized;
+        }
+      });
+      return next;
+    });
+  }, [positions]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("baseMap", baseMap);
+    }
+  }, [baseMap]);
 
   const getPos = (deviceId) => positions.find((p) => p.deviceId === deviceId);
 
-  const overspeedThreshold = 80; // km/h
+  const baseLayers = useMemo(() => ([
+    {
+      id: "osm",
+      name: "OpenStreetMap",
+      url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      attribution: "&copy; OpenStreetMap",
+      subdomains: ["a", "b", "c"],
+    },
+    {
+      id: "carto",
+      name: "Carto Basemaps",
+      url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+      attribution: "&copy; CartoDB",
+      subdomains: ["a", "b", "c", "d"],
+    },
+    {
+      id: "google-road",
+      name: "Google Estrada",
+      url: "https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}",
+      attribution: "&copy; Google",
+      subdomains: ["0", "1", "2", "3"],
+    },
+    {
+      id: "google-sat",
+      name: "Google Satélite",
+      url: "https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+      attribution: "&copy; Google",
+      subdomains: ["0", "1", "2", "3"],
+    },
+    {
+      id: "google-hybrid",
+      name: "Google Híbrido",
+      url: "https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+      attribution: "&copy; Google",
+      subdomains: ["0", "1", "2", "3"],
+    },
+  ]), []);
 
-  const notifications = useMemo(() => {
-    if (!positions.length) return [];
-
-    const nameById = devices.reduce((acc, d) => {
-      acc[d.id] = d.name || d.uniqueId || `ID ${d.id}`;
-      return acc;
-    }, {});
-
-    const ignitionOn = [];
-    const ignitionOff = [];
-    const moving = [];
-    const stopped = [];
-    const overspeed = [];
-    const online = [];
-    const offline = [];
-
-    devices.forEach((d) => {
-      const name = nameById[d.id] || `ID ${d.id}`;
-      if (d.status === "online") {
-        online.push(name);
-      } else if (d.status) {
-        offline.push(name);
-      }
-    });
-
-    positions.forEach((p) => {
-      const name = nameById[p.deviceId] || `ID ${p.deviceId}`;
-      const speed = Number(p.speed) || 0;
-      const ign = p.attributes?.ignition;
-
-      if (ign === true) ignitionOn.push(name);
-      if (ign === false) ignitionOff.push(name);
-
-      if (speed > overspeedThreshold) {
-        overspeed.push(`${name} (${Math.round(speed)} km/h)`);
-      }
-
-      if (speed > 5) {
-        moving.push(`${name} (${Math.round(speed)} km/h)`);
-      } else {
-        stopped.push(name);
-      }
-    });
-
-    const data = [];
-    if (online.length) data.push({ label: "Online", icon: "🟢", color: "bg-green-100 text-green-700", items: online });
-    if (offline.length) data.push({ label: "Offline", icon: "⚪", color: "bg-slate-100 text-slate-700", items: offline });
-    if (ignitionOn.length) data.push({ label: "Ignição ligada", icon: "🔌", color: "bg-green-100 text-green-700", items: ignitionOn });
-    if (ignitionOff.length) data.push({ label: "Ignição desligada", icon: "⏻", color: "bg-slate-100 text-slate-700", items: ignitionOff });
-    if (moving.length) data.push({ label: "Veículo em movimento", icon: "🚀", color: "bg-sky-100 text-sky-700", items: moving });
-    if (stopped.length) data.push({ label: "Veículo parado", icon: "⏸️", color: "bg-amber-100 text-amber-700", items: stopped });
-    if (overspeed.length) data.push({ label: "Alta velocidade", icon: "⚡", color: "bg-red-100 text-red-700", items: overspeed });
-
-    return data;
-  }, [positions, devices]);
+  const currentLayer = baseLayers.find((l) => l.id === baseMap) || baseLayers[0];
 
   return (
     <div className="w-full h-[calc(100vh-2rem)] bg-white relative">
+      <div className="flex items-center justify-end gap-2 p-2">
+        <label className="text-xs text-slate-600">Mapa:</label>
+        <select
+          value={baseMap}
+          onChange={(e) => setBaseMap(e.target.value)}
+          className="border border-slate-200 rounded-lg px-3 py-1 text-sm shadow-sm"
+        >
+          {baseLayers.map((layer) => (
+            <option key={layer.id} value={layer.id}>
+              {layer.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
       <MapContainer
         center={[-22.84, -47.15]}
         zoom={10}
-        style={{ height: "100%", width: "100%" }}
+        style={{ height: "calc(100% - 48px)", width: "100%" }}
+        className="z-0"
       >
-        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <TileLayer
+          key={currentLayer.id}
+          url={currentLayer.url}
+          attribution={currentLayer.attribution}
+          subdomains={currentLayer.subdomains}
+        />
         <FitMapView positions={positions} />
 
         {devices.map((d) => {
           const p = getPos(d.id);
           if (!p) return null;
           const icon = getMarkerIcon(d.category, d.name);
+          const isOnline = d.status === "online";
+          const rawIgn = p.attributes?.ignition;
+          const normalizedIgn =
+            rawIgn === true || rawIgn === "true" || rawIgn === 1
+              ? true
+              : rawIgn === false || rawIgn === "false" || rawIgn === 0
+              ? false
+              : null;
+          const ignition = normalizedIgn !== null ? normalizedIgn : ignitionCache[d.id];
+          const address =
+            p.address ||
+            p.attributes?.address ||
+            p.attributes?.formattedAddress ||
+            (p.latitude && p.longitude ? `${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}` : "-");
           return (
             <Marker
               key={d.id}
@@ -168,46 +227,38 @@ export default function MapView({ onSelectDevice }) {
                 click: () => onSelectDevice && onSelectDevice(d, p),
               }}
             >
-              <Tooltip direction="top" offset={[0, -10]}>
-                <div className="text-xs">
-                  <div className="font-semibold text-slate-800">{d.name || "Sem nome"}</div>
-                  <div className="text-slate-600">Categoria: {d.category || "-"}</div>
-                  <div className="text-slate-600">Velocidade: {p.speed ?? 0} km/h</div>
-                  <div className="text-slate-600">
-                    Atualizado: {p.deviceTime ? new Date(p.deviceTime).toLocaleString() : "-"}
+              <Tooltip direction="top" offset={[0, -10]} permanent={false} interactive>
+                <div className="text-xs bg-white/95 backdrop-blur-sm border border-slate-200 rounded-xl shadow-lg p-3 min-w-[200px]">
+                  <div className="flex items-center justify-between">
+                    <div className="font-semibold text-slate-800">{d.name || "Sem nome"}</div>
+                    <span className={`text-[10px] px-2 py-1 rounded-full ${isOnline ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-500"}`}>
+                      {isOnline ? "Online" : "Offline"}
+                    </span>
+                  </div>
+                  <div className="mt-2 space-y-1 text-slate-700">
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-400 text-[10px] uppercase tracking-wide">Velocidade</span>
+                      <span className="font-semibold text-slate-800">{p.speed ?? 0} km/h</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-400 text-[10px] uppercase tracking-wide">Ignição</span>
+                      <span className="font-semibold text-slate-800">
+                        {ignition === true ? "Ligada" : ignition === false ? "Desligada" : "-"}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-600 leading-snug">
+                      {address !== "-" ? address : "Sem endereço disponível"}
+                    </div>
+                    <div className="text-[10px] text-slate-500">
+                      {p.deviceTime ? new Date(p.deviceTime).toLocaleString() : "-"}
+                    </div>
                   </div>
                 </div>
               </Tooltip>
-              <Popup>
-                <div>
-                  <strong>{d.name}</strong>
-                  <br />
-                  Velocidade: {p.speed ?? 0} km/h
-                </div>
-              </Popup>
             </Marker>
           );
         })}
       </MapContainer>
-
-      {notifications.length > 0 && (
-        <div className="absolute top-4 right-4 flex flex-col gap-2 w-64">
-          {notifications.map((n) => (
-            <div
-              key={n.label}
-              className={`flex items-start gap-2 px-3 py-2 rounded-xl text-xs font-semibold shadow-sm ${n.color}`}
-            >
-              <span className="mt-[2px]">{n.icon}</span>
-              <div className="flex-1">
-                <div>{n.label}</div>
-                <div className="text-[11px] text-slate-600 font-normal leading-tight">
-                  {n.items.join(", ")}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
