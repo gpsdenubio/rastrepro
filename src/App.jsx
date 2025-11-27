@@ -33,7 +33,7 @@ export default function App() {
         <Routes>
           <Route element={<MainLayout />}>
             <Route path="/" element={<MapView />} />
-            <Route path="/dashboard" element={<Navigate to="/map" replace />} />
+            <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/devices" element={<Devices />} />
             <Route path="/users" element={<Users />} />
             <Route path="/reports" element={<Reports />} />

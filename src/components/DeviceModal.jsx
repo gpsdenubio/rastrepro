@@ -84,96 +84,119 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold text-slate-800">
-            {isEdit ? "Editar dispositivo" : "Novo dispositivo"}
-          </h2>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-700">✕</button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="bg-slate-900 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.55)] w-full max-w-4xl max-h-[90vh] flex flex-col border border-slate-800 text-slate-100">
+        <div className="flex justify-between items-center px-6 py-4 border-b border-slate-800">
+          <div>
+            <div className="text-xs uppercase tracking-wide text-slate-400">Dispositivo</div>
+            <h2 className="text-xl font-semibold">
+              {isEdit ? "Editar dispositivo" : "Novo dispositivo"}
+            </h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="h-10 w-10 rounded-[10px] border border-slate-700 bg-slate-800 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)] text-slate-100 transition"
+          >
+            ✕
+          </button>
         </div>
 
         {error && (
-          <div className="text-sm text-red-700 bg-red-50 border border-red-100 p-2 rounded mb-3">
-            {error}
+          <div className="px-6 pt-4">
+            <div className="text-sm text-red-300 bg-red-900/40 border border-red-700 p-2 rounded">
+              {error}
+            </div>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className="flex flex-col text-sm">
-              Nome
-              <input
-                value={form.name}
-                onChange={(e) => handleChange("name", e.target.value)}
-                className="mt-1 border rounded-lg px-3 py-2"
-                required
-              />
-            </label>
-            <label className="flex flex-col text-sm">
-              IMEI (uniqueId)
-              <input
-                value={form.uniqueId}
-                onChange={(e) => handleChange("uniqueId", e.target.value)}
-                className="mt-1 border rounded-lg px-3 py-2"
-                required
-              />
-            </label>
-            <label className="flex flex-col text-sm">
-              Modelo
-              <input
-                value={form.model}
-                onChange={(e) => handleChange("model", e.target.value)}
-                className="mt-1 border rounded-lg px-3 py-2"
-              />
-            </label>
-            <label className="flex flex-col text-sm">
-              Categoria
-              <select
-                value={form.category}
-                onChange={(e) => handleChange("category", e.target.value)}
-                className="mt-1 border rounded-lg px-3 py-2"
-              >
-                {categories.map((c) => (
-                  <option key={c.value} value={c.value}>{c.label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col text-sm">
-              Placa
-              <input
-                value={form.plate}
-                onChange={(e) => handleChange("plate", e.target.value)}
-                className="mt-1 border rounded-lg px-3 py-2"
-              />
-            </label>
-            <label className="flex flex-col text-sm">
-              Linha telefônica
-              <input
-                value={form.phone}
-                onChange={(e) => handleChange("phone", e.target.value)}
-                className="mt-1 border rounded-lg px-3 py-2"
-              />
-            </label>
-          </div>
+        <div className="px-6 py-4 overflow-y-auto flex-1 bg-slate-950">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <section className="rounded-2xl border border-slate-800 bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.45)] p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-slate-100">Informações gerais</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="flex flex-col text-sm">
+                  Nome
+                  <input
+                    value={form.name}
+                    onChange={(e) => handleChange("name", e.target.value)}
+                    className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
+                    required
+                  />
+                </label>
+                <label className="flex flex-col text-sm">
+                  IMEI (uniqueId)
+                  <input
+                    value={form.uniqueId}
+                    onChange={(e) => handleChange("uniqueId", e.target.value)}
+                    className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
+                    required
+                  />
+                </label>
+                <label className="flex flex-col text-sm">
+                  Modelo
+                  <input
+                    value={form.model}
+                    onChange={(e) => handleChange("model", e.target.value)}
+                    className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
+                  />
+                </label>
+                <label className="flex flex-col text-sm">
+                  Categoria
+                  <select
+                    value={form.category}
+                    onChange={(e) => handleChange("category", e.target.value)}
+                    className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
+                  >
+                    {categories.map((c) => (
+                      <option key={c.value} value={c.value}>{c.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </section>
 
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-4 py-2 rounded-lg bg-sky-600 text-white font-semibold hover:bg-sky-700 disabled:opacity-60"
-            >
-              {saving ? "Salvando..." : isEdit ? "Salvar" : "Criar"}
-            </button>
-          </div>
-        </form>
+            <section className="rounded-2xl border border-slate-800 bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.45)] p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-slate-100">Identificação do veículo</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="flex flex-col text-sm">
+                  Placa
+                  <input
+                    value={form.plate}
+                    onChange={(e) => handleChange("plate", e.target.value)}
+                    className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
+                  />
+                </label>
+                <label className="flex flex-col text-sm">
+                  Linha telefônica
+                  <input
+                    value={form.phone}
+                    onChange={(e) => handleChange("phone", e.target.value)}
+                    className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
+                  />
+                </label>
+              </div>
+            </section>
+          </form>
+        </div>
+
+        <div className="flex justify-end gap-2 p-4 border-t border-slate-800 bg-slate-900">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-[10px] h-[46px] border border-slate-700 bg-slate-800 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)]"
+            disabled={saving}
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            onClick={handleSubmit}
+            className="px-4 py-2 rounded-[10px] h-[46px] bg-sky-500 text-slate-900 font-semibold hover:bg-sky-400 disabled:opacity-60 shadow-[0_0_16px_rgba(14,165,233,0.45)]"
+          >
+            {saving ? "Salvando..." : isEdit ? "Salvar" : "Criar"}
+          </button>
+        </div>
       </div>
     </div>
   );

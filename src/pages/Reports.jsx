@@ -13,12 +13,12 @@ L.Icon.Default.mergeOptions({
   shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
 });
 
-const tabs = [
-  { value: "route", label: "Rotas" },
-  { value: "trips", label: "Viagens" },
-  { value: "stops", label: "Paradas" },
-  { value: "events", label: "Eventos" },
-  { value: "resumo", label: "Resumo" },
+const reportCards = [
+  { value: "route", label: "Percurso", desc: "Rastreamento detalhado" },
+  { value: "stops", label: "Paradas", desc: "Intervalos e duração" },
+  { value: "trips", label: "Viagens", desc: "Início/Fim com distâncias" },
+  { value: "events", label: "Eventos", desc: "Ign, cerca, alarme" },
+  { value: "resumo", label: "Resumo", desc: "Totais e estatísticas" },
 ];
 
 const toDateTimeLocal = (date) => date.toISOString().slice(0, 16);
@@ -62,6 +62,10 @@ export default function Reports() {
   const [activeTab, setActiveTab] = useState("route");
   const [fromDate, setFromDate] = useState(() => toDateTimeLocal(addHours(new Date(), -24)));
   const [toDate, setToDate] = useState(() => toDateTimeLocal(new Date()));
+  const [baseMap, setBaseMap] = useState(() => {
+    const stored = typeof window !== "undefined" ? localStorage.getItem("reportsBaseMap") : null;
+    return stored || "google-road";
+  });
 
   const [dataByType, setDataByType] = useState({
     route: { rows: [], raw: [], mapPoints: [] },
@@ -86,6 +90,45 @@ export default function Reports() {
   }, []);
 
   const toIso = (val) => new Date(val).toISOString();
+  const setRange = (range) => {
+    const now = new Date();
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const setLocal = (d) => toDateTimeLocal(d);
+
+    switch (range) {
+      case "today":
+        setFromDate(setLocal(startOfToday));
+        setToDate(setLocal(now));
+        break;
+      case "yesterday": {
+        const start = new Date(startOfToday);
+        start.setDate(start.getDate() - 1);
+        const end = new Date(start);
+        end.setHours(23, 59, 59, 999);
+        setFromDate(setLocal(start));
+        setToDate(setLocal(end));
+        break;
+      }
+      case "3d": {
+        const start = new Date(now);
+        start.setDate(start.getDate() - 3);
+        setFromDate(setLocal(start));
+        setToDate(setLocal(now));
+        break;
+      }
+      case "4d": {
+        const start = new Date(now);
+        start.setDate(start.getDate() - 4);
+        setFromDate(setLocal(start));
+        setToDate(setLocal(now));
+        break;
+      }
+      default:
+        break;
+    }
+  };
 
   const normalizeRows = (type, data) => {
     if (!Array.isArray(data)) return [];
@@ -185,6 +228,55 @@ export default function Reports() {
     return found?.name || found?.uniqueId || "Dispositivo";
   }, [devices, selectedDevice]);
 
+  const baseLayers = useMemo(
+    () => [
+      {
+        id: "google-road",
+        name: "Google Estrada",
+        url: "https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}",
+        attribution: "&copy; Google",
+        subdomains: ["0", "1", "2", "3"],
+      },
+      {
+        id: "google-sat",
+        name: "Google Satélite",
+        url: "https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+        attribution: "&copy; Google",
+        subdomains: ["0", "1", "2", "3"],
+      },
+      {
+        id: "google-hybrid",
+        name: "Google Híbrido",
+        url: "https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+        attribution: "&copy; Google",
+        subdomains: ["0", "1", "2", "3"],
+      },
+      {
+        id: "osm",
+        name: "OpenStreetMap",
+        url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        attribution: "&copy; OpenStreetMap",
+        subdomains: ["a", "b", "c"],
+      },
+      {
+        id: "carto",
+        name: "Carto Basemaps",
+        url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+        attribution: "&copy; CartoDB",
+        subdomains: ["a", "b", "c", "d"],
+      },
+    ],
+    []
+  );
+
+  const currentLayer = baseLayers.find((l) => l.id === baseMap) || baseLayers[0];
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("reportsBaseMap", baseMap);
+    }
+  }, [baseMap]);
+
   const routeStats = useMemo(() => {
     const routeRaw = dataByType?.route?.raw || [];
     if (!routeRaw.length) return null;
@@ -272,19 +364,35 @@ export default function Reports() {
 
   const currentRows = dataByType[activeTab]?.rows || [];
   const mapPoints = dataByType.route?.mapPoints || [];
+  const currentReportLabel = reportCards.find((t) => t.value === activeTab)?.label || "Relatório";
 
   return (
-    <div className="p-4 space-y-4 bg-white">
-      <div className="bg-white shadow rounded-2xl p-4 border border-slate-100">
-        <h1 className="text-2xl font-bold text-sky-700 mb-4">Relatórios</h1>
+    <div className="p-4 md:p-6 space-y-4 bg-slate-950 min-h-screen text-slate-100">
+      <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl p-4 border border-slate-800 space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-100">Relatórios</h1>
+            <p className="text-sm text-slate-400">Selecione o tipo, veículo e período para gerar.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => handleGenerate(activeTab)}
+              disabled={loading}
+              className="bg-sky-500 hover:bg-sky-400 disabled:opacity-60 text-slate-900 px-4 py-2 h-[46px] rounded-[10px] shadow-[0_0_16px_rgba(14,165,233,0.45)] transition font-semibold"
+            >
+              {loading ? "Gerando..." : "Gerar relatório"}
+            </button>
+          </div>
+        </div>
 
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-slate-500">Dispositivo</label>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <label className="flex flex-col text-sm">
+            Veículo
             <select
               value={selectedDevice}
               onChange={(e) => setSelectedDevice(e.target.value)}
-              className="border rounded-lg px-3 py-2 focus:outline-none focus:ring focus:ring-sky-200"
+              className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
               required
             >
               <option value="">Selecione</option>
@@ -294,69 +402,107 @@ export default function Reports() {
                 </option>
               ))}
             </select>
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-slate-500">Data inicial</label>
+          </label>
+          <label className="flex flex-col text-sm">
+            Data inicial
             <input
               type="datetime-local"
               value={fromDate}
               onChange={(e) => setFromDate(e.target.value)}
-              className="border rounded-lg px-3 py-2 focus:outline-none focus:ring focus:ring-sky-200"
+              className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
               required
             />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-xs text-slate-500">Data final</label>
+          </label>
+          <label className="flex flex-col text-sm">
+            Data final
             <input
               type="datetime-local"
               value={toDate}
               onChange={(e) => setToDate(e.target.value)}
-              className="border rounded-lg px-3 py-2 focus:outline-none focus:ring focus:ring-sky-200"
+              className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
               required
             />
-          </div>
-
-          <div className="flex items-end">
-            <button
-              type="button"
-              onClick={() => handleGenerate(activeTab)}
-              disabled={loading}
-              className="bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white px-6 py-2 rounded-lg transition w-full"
-            >
-              {loading ? "Gerando..." : "Gerar"}
-            </button>
-          </div>
+          </label>
         </div>
 
-        {error && <div className="text-red-600 text-sm mt-2">{error}</div>}
+        <div className="flex flex-wrap gap-2 text-xs text-slate-400">
+          <span className="font-semibold">Intervalo rápido:</span>
+          <button
+            onClick={() => setRange("today")}
+            className="px-3 py-1 rounded-[10px] border border-slate-700 bg-slate-800 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)]"
+          >
+            Hoje
+          </button>
+          <button
+            onClick={() => setRange("yesterday")}
+            className="px-3 py-1 rounded-[10px] border border-slate-700 bg-slate-800 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)]"
+          >
+            Ontem
+          </button>
+          <button
+            onClick={() => setRange("3d")}
+            className="px-3 py-1 rounded-[10px] border border-slate-700 bg-slate-800 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)]"
+          >
+            Últimos 3 dias
+          </button>
+          <button
+            onClick={() => setRange("4d")}
+            className="px-3 py-1 rounded-[10px] border border-slate-700 bg-slate-800 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)]"
+          >
+            Últimos 4 dias
+          </button>
+        </div>
+
+        {error && <div className="text-red-400 text-sm">{error}</div>}
       </div>
 
-      <div className="bg-white shadow rounded-2xl p-2 border border-slate-100">
-        <div className="flex flex-wrap gap-2 p-2">
-          {tabs.map((tab) => (
+      <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl p-3 border border-slate-800">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+          {reportCards.map((tab) => (
             <button
               key={tab.value}
               onClick={() => setActiveTab(tab.value)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium border transition ${
+              className={`text-left px-4 py-3 rounded-2xl border transition shadow-sm ${
                 activeTab === tab.value
-                  ? "bg-sky-600 text-white border-sky-600"
-                  : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                  ? "border-sky-500 bg-slate-800 text-sky-200 shadow-[0_0_16px_rgba(14,165,233,0.35)]"
+                  : "bg-slate-900 text-slate-200 border-slate-800 hover:border-sky-500/60"
               }`}
             >
-              {tab.label}
+              <div className="text-sm font-semibold">{tab.label}</div>
+              <div className="text-[12px] text-slate-400">{tab.desc}</div>
             </button>
           ))}
         </div>
       </div>
 
       {activeTab === "route" && mapPoints.length > 0 && (
-        <div className="bg-white shadow rounded-2xl p-4 border border-slate-100">
-          <h2 className="text-lg font-semibold text-slate-700 mb-2">Mapa - {selectedDeviceName}</h2>
-          <div className="h-96 rounded-lg overflow-hidden border">
+        <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl p-4 border border-slate-800 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-slate-100">Mapa - {selectedDeviceName}</h2>
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <span>Base:</span>
+              <select
+                value={baseMap}
+                onChange={(e) => setBaseMap(e.target.value)}
+                className="border border-slate-700 bg-slate-800 text-slate-100 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/60"
+              >
+                {baseLayers.map((layer) => (
+                  <option key={layer.id} value={layer.id}>
+                    {layer.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="h-96 rounded-lg overflow-hidden border border-slate-800">
             <MapContainer center={mapPoints[0]} zoom={13} style={{ height: "100%", width: "100%" }}>
-              <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+              <TileLayer
+                key={currentLayer.id}
+                url={currentLayer.url}
+                attribution={currentLayer.attribution}
+                subdomains={currentLayer.subdomains}
+              />
               <Polyline positions={mapPoints} color="blue" weight={4} />
               <Marker position={mapPoints[0]}>
                 <Popup>Início</Popup>
@@ -374,27 +520,27 @@ export default function Reports() {
       )}
 
       {activeTab === "resumo" && routeStats && (
-        <div className="bg-white shadow rounded-2xl p-4 border border-slate-100">
-          <h2 className="text-lg font-semibold text-slate-700 mb-4">Resumo da Viagem</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 text-sm text-slate-700">
-            <div className="bg-slate-50 rounded-lg p-3">
-              <div className="text-xs text-slate-500">Distância total</div>
+        <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl p-4 border border-slate-800">
+          <h2 className="text-lg font-semibold text-slate-100 mb-4">Resumo da Viagem</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 text-sm text-slate-200">
+            <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
+              <div className="text-xs text-slate-400">Distância total</div>
               <div className="text-lg font-semibold">{routeStats.totalDistanceKm} km</div>
             </div>
-            <div className="bg-slate-50 rounded-lg p-3">
-              <div className="text-xs text-slate-500">Tempo total</div>
+            <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
+              <div className="text-xs text-slate-400">Tempo total</div>
               <div className="text-lg font-semibold">{routeStats.totalTime}</div>
             </div>
-            <div className="bg-slate-50 rounded-lg p-3">
-              <div className="text-xs text-slate-500">Velocidade máxima</div>
+            <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
+              <div className="text-xs text-slate-400">Velocidade máxima</div>
               <div className="text-lg font-semibold">{routeStats.maxSpeed}</div>
             </div>
-            <div className="bg-slate-50 rounded-lg p-3">
-              <div className="text-xs text-slate-500">Velocidade média</div>
+            <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
+              <div className="text-xs text-slate-400">Velocidade média</div>
               <div className="text-lg font-semibold">{routeStats.avgSpeed}</div>
             </div>
-            <div className="bg-slate-50 rounded-lg p-3">
-              <div className="text-xs text-slate-500">Tempo parado</div>
+            <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
+              <div className="text-xs text-slate-400">Tempo parado</div>
               <div className="text-lg font-semibold">{routeStats.stopped}</div>
             </div>
           </div>
@@ -402,19 +548,19 @@ export default function Reports() {
       )}
 
       {(activeTab === "route" || activeTab === "trips" || activeTab === "stops" || activeTab === "events") && (
-        <div className="bg-white shadow rounded-2xl p-4 border border-slate-100">
-          <h2 className="text-lg font-semibold text-slate-700 mb-2">
-            {tabs.find((t) => t.value === activeTab)?.label}
+        <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl p-4 border border-slate-800">
+          <h2 className="text-lg font-semibold text-slate-100 mb-2">
+            {currentReportLabel}
           </h2>
 
           {!loading && generatedTypes[activeTab] && currentRows.length === 0 && (
-            <div className="text-slate-500 text-sm">Nenhum registro no período selecionado.</div>
+            <div className="text-slate-400 text-sm">Nenhum registro no período selecionado.</div>
           )}
 
           <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
+            <table className="min-w-full text-sm text-slate-200">
               <thead>
-                <tr className="text-left text-slate-500 border-b">
+                <tr className="text-left text-slate-400 border-b border-slate-800">
                   <th className="py-2 pr-4">Horário</th>
                   <th className="py-2 pr-4">Endereço / Coordenadas</th>
                   <th className="py-2 pr-4">Velocidade</th>
@@ -423,9 +569,9 @@ export default function Reports() {
                   <th className="py-2 pr-4">Evento</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-slate-800">
                 {currentRows.map((row) => (
-                  <tr key={row.id} className="border-b last:border-0">
+                  <tr key={row.id} className="border-b border-slate-800 last:border-0">
                     <td className="py-2 pr-4 whitespace-nowrap">{row.time}</td>
                     <td className="py-2 pr-4">{row.address}</td>
                     <td className="py-2 pr-4">{row.speed}</td>

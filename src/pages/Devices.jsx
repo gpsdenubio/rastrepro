@@ -35,6 +35,7 @@ export default function Devices() {
   const [modalOpen, setModalOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [commandLogs, setCommandLogs] = useState([]);
 
   const loadDevices = async () => {
     setLoading(true);
@@ -78,25 +79,64 @@ export default function Devices() {
     }));
   }, [devices]);
 
+  const onlineCount = useMemo(
+    () => devices.filter((d) => d.status === "online").length,
+    [devices]
+  );
+  const offlineCount = useMemo(
+    () => devices.filter((d) => d.status && d.status !== "online").length,
+    [devices]
+  );
+  const unknownCount = useMemo(
+    () => devices.filter((d) => !d.status).length,
+    [devices]
+  );
+
+  const handleLog = (entry) => {
+    setCommandLogs((prev) => [entry, ...prev].slice(0, 20));
+  };
+
   return (
-    <div className="p-4 space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-slate-800">Dispositivos</h1>
+    <div className="p-4 md:p-6 space-y-4 bg-slate-950 min-h-screen text-slate-100">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-100">Dispositivos</h1>
+          <p className="text-sm text-slate-400">Gerencie veículos e comandos.</p>
+        </div>
         <button
           onClick={handleNew}
-          className="bg-sky-600 hover:bg-sky-700 text-white px-4 py-2 rounded-lg font-semibold"
+          className="bg-sky-500 hover:bg-sky-400 text-slate-900 px-4 py-2 h-[46px] rounded-[10px] font-semibold shadow-[0_0_16px_rgba(14,165,233,0.45)] transition"
         >
           + Novo dispositivo
         </button>
       </div>
 
-      {error && <div className="text-red-600 text-sm">{error}</div>}
+      {error && <div className="text-red-400 text-sm">{error}</div>}
 
-      <div className="bg-white shadow-sm rounded-2xl border border-slate-100 overflow-hidden">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
+          <div className="text-xs text-slate-400">Total</div>
+          <div className="text-xl font-semibold text-slate-100">{devices.length}</div>
+        </div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
+          <div className="text-xs text-slate-400">Online</div>
+          <div className="text-xl font-semibold text-emerald-400">{onlineCount}</div>
+        </div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
+          <div className="text-xs text-slate-400">Offline</div>
+          <div className="text-xl font-semibold text-red-300">{offlineCount}</div>
+        </div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
+          <div className="text-xs text-slate-400">Desconhecido</div>
+          <div className="text-xl font-semibold text-slate-100">{unknownCount}</div>
+        </div>
+      </div>
+
+      <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl border border-slate-800 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
-              <tr className="text-left text-slate-500 border-b border-slate-100">
+              <tr className="text-left text-slate-400 border-b border-slate-800">
                 <th className="py-3 px-4"> </th>
                 <th className="py-3 px-4">Nome</th>
                 <th className="py-3 px-4">IMEI</th>
@@ -110,7 +150,7 @@ export default function Devices() {
                 <th className="py-3 px-4 text-right">Bloqueio</th>
               </tr>
             </thead>
-            <tbody className="[&>tr]:border-b [&>tr]:border-slate-100">
+            <tbody className="[&>tr]:border-b [&>tr]:border-slate-800 text-slate-200">
               {loading ? (
                 <tr>
                   <td className="py-4 px-4" colSpan={10}>Carregando...</td>
@@ -121,9 +161,9 @@ export default function Devices() {
                 </tr>
               ) : (
                 tableRows.map((d) => (
-                    <tr key={d.id} className="last:border-0">
+                  <tr key={d.id} className="last:border-0">
                     <td className="py-3 px-4 text-lg">{d.categoryIcon}</td>
-                    <td className="py-3 px-4 font-semibold text-slate-800">{d.name}</td>
+                    <td className="py-3 px-4 font-semibold text-slate-100">{d.name}</td>
                     <td className="py-3 px-4">{d.uniqueId}</td>
                     <td className="py-3 px-4">{d.modelAttr}</td>
                     <td className="py-3 px-4 capitalize">{d.category || "-"}</td>
@@ -133,30 +173,32 @@ export default function Devices() {
                       <span
                         className={`px-2 py-1 rounded-full text-xs font-semibold ${
                           d.status === "online"
-                            ? "bg-green-100 text-green-700"
-                            : "bg-red-100 text-red-700"
+                            ? "bg-emerald-900/60 text-emerald-200 border border-emerald-700"
+                            : d.status
+                            ? "bg-red-900/60 text-red-200 border border-red-700"
+                            : "bg-slate-800 text-slate-200 border border-slate-700"
                         }`}
                       >
-                        {d.status === "online" ? "Online" : "Offline"}
+                        {d.status === "online" ? "Online" : d.status ? "Offline" : "Desconhecido"}
                       </span>
                     </td>
                     <td className="py-3 px-4">{formatDateTime(d.lastUpdate)}</td>
                     <td className="py-3 px-4 text-right space-x-2">
                       <button
                         onClick={() => handleEdit(d)}
-                        className="px-3 py-1 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50"
+                        className="px-3 py-1 rounded-[10px] border border-slate-700 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_10px_rgba(14,165,233,0.35)] transition"
                       >
                         Editar
                       </button>
                       <button
                         onClick={() => handleDelete(d)}
-                        className="px-3 py-1 rounded-lg border border-red-200 text-red-700 hover:bg-red-50"
+                        className="px-3 py-1 rounded-[10px] border border-red-700 text-red-200 hover:border-red-400 transition"
                       >
                         Excluir
                       </button>
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <DeviceBlockActions device={d} />
+                      <DeviceBlockActions device={d} onLog={handleLog} />
                     </td>
                   </tr>
                 ))
@@ -165,6 +207,34 @@ export default function Devices() {
           </table>
         </div>
       </div>
+
+      {commandLogs.length > 0 && (
+        <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl border border-slate-800 p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-100">Logs de bloqueio/desbloqueio</h3>
+            <button
+              onClick={() => setCommandLogs([])}
+              className="text-xs text-slate-400 hover:text-sky-300"
+            >
+              Limpar
+            </button>
+          </div>
+          <div className="space-y-1 max-h-60 overflow-auto text-xs text-slate-300">
+            {commandLogs.map((log, idx) => (
+              <div key={idx} className="flex items-start justify-between border-b border-slate-800 py-1">
+                <div>
+                  <div className="font-semibold">{log.deviceName}</div>
+                  <div className="text-slate-400">{log.action} — {log.status}</div>
+                  {log.error && <div className="text-red-400">{log.error}</div>}
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  {log.time ? new Date(log.time).toLocaleTimeString() : ""}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <DeviceModal
         open={modalOpen}

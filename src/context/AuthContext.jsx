@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 import api, { setAuthHeader as applyAxiosAuthHeader } from "../services/api";
+import { recordLog } from "../services/logs";
 
 const AuthContext = createContext({
   user: null,
@@ -12,11 +13,25 @@ const AuthContext = createContext({
 
 const USERNAME_KEY = "authUsername";
 const HEADER_KEY = "authHeader";
+const SESSION_LOGS_KEY = "sessionLogs";
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [authHeader, setAuthHeader] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  const appendSessionLog = useCallback((entry) => {
+    try {
+      const now = new Date().toISOString();
+      const prev = JSON.parse(localStorage.getItem(SESSION_LOGS_KEY) || "[]");
+      const next = [{ ...entry, time: now }, ...prev].slice(0, 100);
+      localStorage.setItem(SESSION_LOGS_KEY, JSON.stringify(next));
+      // tenta também gravar remotamente
+      recordLog({ ...entry, time: now }).catch(() => {});
+    } catch (err) {
+      // silencioso
+    }
+  }, []);
 
   const clearSession = useCallback(() => {
     localStorage.removeItem(HEADER_KEY);
@@ -70,6 +85,7 @@ export function AuthProvider({ children }) {
 
       const foundUser = await fetchUser(storedUsername);
       setUser(foundUser);
+      appendSessionLog({ action: "session_restore", username: storedUsername || foundUser?.name || "desconhecido" });
       setLoading(false);
       return true;
     } catch (err) {
@@ -95,6 +111,7 @@ export function AuthProvider({ children }) {
 
         const foundUser = await fetchUser(username);
         setUser(foundUser);
+        appendSessionLog({ action: "login", username });
 
         setLoading(false);
         return { success: true, user: foundUser };
@@ -111,8 +128,9 @@ export function AuthProvider({ children }) {
   );
 
   const logout = useCallback(() => {
+    appendSessionLog({ action: "logout", username: user?.name || user?.username || "desconhecido" });
     clearSession();
-  }, [clearSession]);
+  }, [clearSession, user, appendSessionLog]);
 
   useEffect(() => {
     loadSession();

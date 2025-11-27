@@ -1,7 +1,16 @@
 // src/components/Sidebar.jsx
 import React from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { Home, MapPin, List, Bell, LogOut, Users, FileText } from "lucide-react";
+import {
+  Home,
+  MapPin,
+  List,
+  Bell,
+  LogOut,
+  Users,
+  FileText,
+  Settings,
+} from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
 export default function Sidebar({ open }) {
@@ -9,30 +18,31 @@ export default function Sidebar({ open }) {
   const location = useLocation();
 
   const baseItem =
-    "w-full flex items-center gap-3 p-2 rounded-lg transition mt-1 text-slate-700";
+    "w-full flex items-center gap-3 p-2.5 rounded-lg transition mt-1 text-slate-200";
 
   const navItems = [
-    { to: "/map", label: "Mapa", icon: <MapPin size={18} /> },
-    { to: "/devices", label: "Veículos", icon: <List size={18} /> },
-    { to: "/users", label: "Usuários", icon: <Users size={18} /> },
-    { to: "/reports", label: "Relatórios", icon: <FileText size={18} /> },
-    { to: "/alerts", label: "Alertas", icon: <Bell size={18} /> },
     { to: "/dashboard", label: "Dashboard", icon: <Home size={18} /> },
+    { to: "/users", label: "Usuários", icon: <Users size={18} /> },
+    { to: "/devices", label: "Dispositivos", icon: <List size={18} /> },
+    { to: "/reports", label: "Relatórios", icon: <FileText size={18} /> },
+    { to: "/alerts", label: "Eventos", icon: <Bell size={18} /> },
+    { to: "/map", label: "Mapa", icon: <MapPin size={18} /> },
+    { to: "/dashboard", label: "Configurações", icon: <Settings size={18} /> },
   ];
 
   return (
     <aside
-      className={`flex-shrink-0 h-screen bg-slate-100 border-r border-slate-200 transition-all ${
+      className={`flex-shrink-0 h-screen bg-slate-900 border-r border-slate-800 transition-all shadow-[8px_0_24px_rgba(0,0,0,0.35)] ${
         open ? "w-64" : "w-16"
       }`}
     >
-      <div className="h-16 flex items-center px-3 border-b dark:border-gray-800">
-        <div className="flex items-center gap-2">
-          {open && <span className="font-bold text-lg text-slate-800">RastrePro</span>}
+      <div className="h-16 flex items-center px-3 border-b border-slate-800">
+        <div className="flex items-center gap-2 text-slate-100">
+          {open && <span className="font-bold text-lg text-sky-400">RastrePro</span>}
         </div>
       </div>
 
-      <nav className="mt-4 px-2">
+      <nav className="mt-4 px-2 flex flex-col gap-1">
         {navItems.map((item, idx) => {
           const active = location.pathname === item.to;
           return (
@@ -40,10 +50,12 @@ export default function Sidebar({ open }) {
               key={item.to}
               to={item.to}
               className={`${baseItem} ${idx === 0 ? "mt-0" : ""} ${
-                active ? "bg-white text-sky-600 border border-slate-200" : "hover:bg-slate-200/60"
+                active
+                  ? "bg-slate-800 text-sky-400 ring-2 ring-sky-500/60 border border-slate-700"
+                  : "hover:bg-slate-800/70"
               }`}
             >
-              <span className={active ? "text-sky-600" : "text-slate-600"}>
+              <span className={active ? "text-sky-400" : "text-slate-300"}>
                 {item.icon}
               </span>
               {open && <span>{item.label}</span>}
@@ -51,17 +63,6 @@ export default function Sidebar({ open }) {
           );
         })}
       </nav>
-
-      <div className="absolute bottom-4 w-full px-2">
-        <NavLink
-          to="/logout"
-          onClick={logout}
-          className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-slate-200/60 text-slate-700"
-        >
-          <LogOut size={18} />
-          {open && <span>Sair</span>}
-        </NavLink>
-      </div>
     </aside>
   );
 }
