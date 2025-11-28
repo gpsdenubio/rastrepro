@@ -16,6 +16,19 @@ export default function TopBar({ onToggleSidebar, title = "RastrePro" }) {
     return localStorage.getItem("alertsMuted") === "true";
   });
   const [menuOpen, setMenuOpen] = useState(false);
+  const messages = [
+    "Seja bem-vindo!",
+    "Plataforma moderna, rápida e feita para quem exige resultado.",
+    "Automação inteligente para facilitar o controle da sua empresa.",
+  ];
+  const [msgIndex, setMsgIndex] = useState(0);
+  const marqueeText = messages[msgIndex];
+  const marqueeRef = React.useRef(null);
+  const containerRef = React.useRef(null);
+  const [durationMs, setDurationMs] = useState(6000); // default
+  const [offsets, setOffsets] = useState({ start: "100%", end: "-200%" });
+  const SPEED_PX_PER_SEC = 80; // velocidade constante
+  const PAUSE_MS = 1000;
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -31,6 +44,30 @@ export default function TopBar({ onToggleSidebar, title = "RastrePro" }) {
       localStorage.setItem("theme", "light");
     }
   }, [dark]);
+
+  // Recalcula duração baseada no tamanho do texto e do container para manter velocidade constante
+  useEffect(() => {
+    const measure = () => {
+      const textEl = marqueeRef.current;
+      const contEl = containerRef.current;
+      if (!textEl || !contEl) return;
+      const textWidth = textEl.getBoundingClientRect().width || 0;
+      const contWidth = contEl.getBoundingClientRect().width || 0;
+      const totalDistance = textWidth + contWidth; // entra pela direita e sai pela esquerda
+      const ms = (totalDistance / SPEED_PX_PER_SEC) * 1000;
+      setOffsets({
+        start: `${contWidth}px`,
+        end: `-${textWidth + 20}px`,
+      });
+      setDurationMs(ms);
+      return ms;
+    };
+    const ms = measure();
+    const timer = setTimeout(() => {
+      setMsgIndex((i) => (i + 1) % messages.length);
+    }, (ms || durationMs) + PAUSE_MS);
+    return () => clearTimeout(timer);
+  }, [msgIndex, messages.length]);
 
   const toggleMute = () => {
     const next = !muted;
@@ -71,9 +108,26 @@ export default function TopBar({ onToggleSidebar, title = "RastrePro" }) {
         </div>
       </div>
 
-      <div className="flex-1" />
+      <div className="flex-1 hidden sm:flex justify-center px-4 pointer-events-none">
+        <div className="led-banner max-w-4xl w-full" ref={containerRef}>
+          <div className="led-banner-inner">
+            <span
+              key={msgIndex}
+              ref={marqueeRef}
+              className="led-marquee"
+              style={{
+                "--led-duration": `${durationMs}ms`,
+                "--led-start": offsets.start,
+                "--led-end": offsets.end,
+              }}
+            >
+              {marqueeText}
+            </span>
+          </div>
+        </div>
+      </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 ml-auto">
         <button
           className="h-11 px-3 rounded-[10px] bg-slate-800/70 border border-slate-700 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)] transition flex items-center gap-1"
           onClick={toggleMute}

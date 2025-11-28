@@ -32,8 +32,8 @@ export default function Sidebar({ open }) {
 
   return (
     <aside
-      className={`flex-shrink-0 h-screen bg-slate-900 border-r border-slate-800 transition-all shadow-[8px_0_24px_rgba(0,0,0,0.35)] ${
-        open ? "w-64" : "w-16"
+      className={`fixed md:static inset-y-0 left-0 z-40 h-screen bg-slate-900 border-r border-slate-800 transition-transform duration-200 shadow-[8px_0_24px_rgba(0,0,0,0.35)] ${
+        open ? "translate-x-0 w-64" : "-translate-x-full md:translate-x-0 md:w-16"
       }`}
     >
       <div className="h-16 flex items-center px-3 border-b border-slate-800">
@@ -42,7 +42,7 @@ export default function Sidebar({ open }) {
         </div>
       </div>
 
-      <nav className="mt-4 px-2 flex flex-col gap-1">
+      <nav className="mt-4 px-2 flex flex-col gap-1 pb-6">
         {navItems.map((item, idx) => {
           const active = location.pathname === item.to;
           return (

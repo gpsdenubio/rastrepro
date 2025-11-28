@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
-import { getDevices, getEvents } from "../services/traccar";
+import { getDevices, getEvents, getPositions } from "../services/traccar";
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -58,12 +58,37 @@ export default function Alerts() {
     try {
       const now = new Date();
       const from = new Date(now.getTime() - 60 * 60 * 1000); // últimos 60 min
-      const [devs, evs] = await Promise.all([
+      const [devs, evs, pos] = await Promise.all([
         getDevices(),
         getEvents({ from: from.toISOString(), to: now.toISOString(), all: true }),
+        getPositions(),
       ]);
+      const positionsById = {};
+      (pos || []).forEach((p) => {
+        if (p?.id != null) positionsById[p.id] = p;
+      });
+      const enriched = (Array.isArray(evs) ? evs : [])
+        .filter((ev) => ev?.positionId != null)
+        .map((ev) => {
+          const p = positionsById[ev.positionId];
+          if (!p) return ev;
+          return {
+            ...ev,
+            latitude: ev.latitude ?? p.latitude,
+            longitude: ev.longitude ?? p.longitude,
+            speed: ev.speed ?? p.speed,
+            address:
+              ev.address ||
+              p.address ||
+              p.attributes?.address ||
+              p.attributes?.formattedAddress,
+            position: p,
+          };
+        })
+        .slice(-50)
+        .reverse();
       setDevices(Array.isArray(devs) ? devs : []);
-      setEvents(Array.isArray(evs) ? evs.slice(-50).reverse() : []);
+      setEvents(enriched);
     } catch (err) {
       setError("Não foi possível carregar eventos.");
     }
@@ -76,7 +101,7 @@ export default function Alerts() {
   }, []);
 
   return (
-    <div className="p-4 md:p-6 space-y-4 bg-slate-950 min-h-screen text-slate-100">
+    <div className="p-4 md:p-6 space-y-4 bg-slate-950 text-slate-100">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-slate-100">Eventos</h1>

@@ -75,68 +75,85 @@ export default function UserDevicesModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl p-6">
-        <div className="flex justify-between items-center mb-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="bg-slate-950 text-slate-100 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.6)] w-full max-w-3xl max-h-[90vh] border border-slate-800 flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-5 bg-gradient-to-r from-sky-700/30 via-slate-900 to-slate-950 border-b border-slate-800">
           <div>
-            <h2 className="text-xl font-semibold text-slate-800">
-              Dispositivos do usuário
-            </h2>
-            <p className="text-sm text-slate-500">
+            <p className="text-xs uppercase tracking-[0.12em] text-slate-400 mb-1">
+              Controle de acesso
+            </p>
+            <h2 className="text-xl font-semibold leading-tight">Dispositivos do usuário</h2>
+            <p className="text-sm text-slate-400">
               {user?.name || "Usuário"} — selecione quais dispositivos ele pode acessar.
             </p>
           </div>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-700">
+          <button
+            onClick={onClose}
+            className="h-10 w-10 rounded-xl border border-slate-700 bg-slate-900 hover:border-sky-500/60 hover:shadow-[0_0_16px_rgba(14,165,233,0.4)] text-slate-100 transition"
+          >
             ✕
           </button>
         </div>
 
         {error && (
-          <div className="text-sm text-red-700 bg-red-50 border border-red-100 p-2 rounded mb-3">
+          <div className="mx-6 mt-4 text-sm text-red-300 bg-red-900/40 border border-red-700 p-3 rounded-xl">
             {error}
           </div>
         )}
 
-        <div className="max-h-[60vh] overflow-auto border rounded-xl">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50">
-              <tr className="text-left text-slate-500 border-b">
-                <th className="py-3 px-4 w-10"></th>
-                <th className="py-3 px-4">Nome</th>
-                <th className="py-3 px-4">IMEI</th>
-                <th className="py-3 px-4">Categoria</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedDevices.map((d) => (
-                <tr key={d.id} className="border-b last:border-0">
-                  <td className="py-2 px-4">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(d.id)}
-                      onChange={() => handleToggle(d.id)}
-                    />
-                  </td>
-                  <td className="py-2 px-4">{d.name || "-"}</td>
-                  <td className="py-2 px-4">{d.uniqueId || "-"}</td>
-                  <td className="py-2 px-4 capitalize">{d.category || "-"}</td>
+        <div className="flex-1 m-6 mt-4 rounded-xl border border-slate-800 bg-slate-900/40 overflow-hidden">
+          <div className="overflow-auto max-h-[60vh]">
+            <table className="min-w-full text-sm text-slate-200">
+              <thead className="bg-slate-900/80 backdrop-blur-sm sticky top-0 z-10 border-b border-slate-800">
+                <tr className="text-left text-slate-400">
+                  <th className="py-3 px-4 w-12"></th>
+                  <th className="py-3 px-4">Nome</th>
+                  <th className="py-3 px-4">IMEI</th>
+                  <th className="py-3 px-4">Categoria</th>
                 </tr>
-              ))}
-              {sortedDevices.length === 0 && (
-                <tr>
-                  <td className="py-4 px-4" colSpan={4}>
-                    Nenhum dispositivo cadastrado.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sortedDevices.map((d) => (
+                  <tr
+                    key={d.id}
+                    className="border-b border-slate-800/60 last:border-0 hover:bg-slate-800/40 transition-colors"
+                  >
+                    <td className="py-3 px-4">
+                      <label className="inline-flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(d.id)}
+                          onChange={() => handleToggle(d.id)}
+                          className="h-4 w-4 accent-sky-500 rounded"
+                        />
+                        <span className="text-xs text-slate-500"># {d.id}</span>
+                      </label>
+                    </td>
+                    <td className="py-3 px-4 font-medium">{d.name || "-"}</td>
+                    <td className="py-3 px-4 text-slate-300">{d.uniqueId || "-"}</td>
+                    <td className="py-3 px-4">
+                      <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-slate-800 text-slate-200 border border-slate-700">
+                        {d.category ? d.category : "—"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                {sortedDevices.length === 0 && (
+                  <tr>
+                    <td className="py-4 px-4 text-center text-slate-400" colSpan={4}>
+                      Nenhum dispositivo cadastrado.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
-        <div className="flex justify-end gap-2 pt-4">
+        <div className="flex justify-end gap-3 px-6 pb-6">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg border border-slate-200 text-slate-600"
+            className="px-4 py-2 rounded-[10px] h-[46px] border border-slate-700 bg-slate-900 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)]"
             disabled={loading}
           >
             Cancelar
@@ -144,7 +161,7 @@ export default function UserDevicesModal({
           <button
             onClick={handleSave}
             disabled={loading}
-            className="px-4 py-2 rounded-lg bg-sky-600 text-white font-semibold hover:bg-sky-700 disabled:opacity-60"
+            className="px-4 py-2 rounded-[10px] h-[46px] bg-sky-500 text-slate-900 font-semibold hover:bg-sky-400 disabled:opacity-60 shadow-[0_0_16px_rgba(14,165,233,0.45)]"
           >
             {loading ? "Salvando..." : "Salvar"}
           </button>

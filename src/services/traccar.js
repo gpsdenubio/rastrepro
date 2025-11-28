@@ -65,6 +65,17 @@ export async function getDevices() {
   }
 }
 
+// ➤ Buscar dispositivo individual (útil para atualizar status de bloqueio)
+export async function getDevice(id) {
+  try {
+    const res = await api.get(`/devices/${id}`);
+    return res.data;
+  } catch (err) {
+    console.error("Erro ao obter dispositivo:", err);
+    throw err;
+  }
+}
+
 // ➤ Buscar posições (latitude, longitude, endereço etc)
 export async function getPositions() {
   try {

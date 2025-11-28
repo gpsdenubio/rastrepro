@@ -1,0 +1,23 @@
+<svg width="88" height="168" viewBox="0 0 88 168" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="motoBody" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#0b1220"/>
+    </linearGradient>
+    <linearGradient id="motoAccent" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#fb923c"/>
+      <stop offset="100%" stop-color="#f97316"/>
+    </linearGradient>
+  </defs>
+  <g stroke="#f97316" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="34" y="18" width="20" height="132" rx="8" ry="8" fill="url(#motoBody)"/>
+    <rect x="30" y="60" width="28" height="24" rx="8" ry="8" fill="#0b1120" stroke="#fbbf24"/>
+    <rect x="36" y="28" width="16" height="18" rx="6" ry="6" fill="#111827"/>
+    <rect x="36" y="122" width="16" height="18" rx="6" ry="6" fill="#111827"/>
+    <circle cx="44" cy="40" r="8" fill="url(#motoAccent)"/>
+    <circle cx="44" cy="128" r="8" fill="url(#motoAccent)"/>
+    <rect x="26" y="78" width="36" height="18" rx="6" ry="6" fill="#0b1220" stroke="#f97316"/>
+    <path d="M44 18L44 6" stroke="#f97316" stroke-width="3"/>
+    <circle cx="44" cy="6" r="4" fill="#f97316" stroke="#f97316"/>
+  </g>
+</svg>

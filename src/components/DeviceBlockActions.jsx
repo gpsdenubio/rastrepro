@@ -1,12 +1,20 @@
 import React, { useState } from "react";
-import { blockEngine, unblockEngine } from "../services/traccar";
+import { blockEngine, unblockEngine, getDevice } from "../services/traccar";
 
-export default function DeviceBlockActions({ device, onLog }) {
+export default function DeviceBlockActions({ device, onLog, onDeviceUpdate }) {
   const [loading, setLoading] = useState(null); // "block" | "unblock" | null
   const [status, setStatus] = useState(null); // "blocked" | "unblocked" | null
   const [message, setMessage] = useState("");
 
   if (!device?.id) return null;
+
+  // Status inicial conforme atributo engine
+  React.useEffect(() => {
+    const engine = device?.attributes?.engine;
+    if (engine === "stop") setStatus("blocked");
+    else if (engine === "resume") setStatus("unblocked");
+    else setStatus(null);
+  }, [device]);
 
   const handleAction = async (action) => {
     setMessage("");
@@ -40,6 +48,12 @@ export default function DeviceBlockActions({ device, onLog }) {
           time: new Date().toISOString(),
         });
       }
+      // Recarrega status real do dispositivo
+      const updated = await getDevice(device.id);
+      const engine = updated?.attributes?.engine;
+      if (engine === "stop") setStatus("blocked");
+      else if (engine === "resume") setStatus("unblocked");
+      onDeviceUpdate?.(updated);
     } catch (err) {
       const msg = err?.response?.data || err?.message || "Erro ao enviar comando";
       setMessage(typeof msg === "string" ? msg : JSON.stringify(msg));

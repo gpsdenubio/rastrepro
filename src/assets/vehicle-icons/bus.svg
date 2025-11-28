@@ -1,0 +1,23 @@
+<svg width="88" height="168" viewBox="0 0 88 168" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="busBody" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="busAccent" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#4338ca"/>
+    </linearGradient>
+  </defs>
+  <g stroke="#818cf8" stroke-width="2" stroke-linejoin="round">
+    <rect x="14" y="14" width="60" height="140" rx="16" ry="16" fill="url(#busBody)"/>
+    <rect x="20" y="28" width="48" height="36" rx="10" ry="10" fill="#0b1220" stroke="#a5b4fc"/>
+    <rect x="22" y="32" width="14" height="24" rx="6" ry="6" fill="#e0e7ff" stroke="#c7d2fe"/>
+    <rect x="38" y="32" width="12" height="24" rx="6" ry="6" fill="#e0e7ff" stroke="#c7d2fe"/>
+    <rect x="52" y="32" width="14" height="24" rx="6" ry="6" fill="#e0e7ff" stroke="#c7d2fe"/>
+    <rect x="18" y="70" width="52" height="68" rx="12" ry="12" fill="#0f172a" stroke="#1f2937"/>
+    <rect x="22" y="140" width="44" height="10" rx="4" ry="4" fill="url(#busAccent)" stroke="#818cf8"/>
+    <rect x="22" y="14" width="44" height="10" rx="4" ry="4" fill="url(#busAccent)" stroke="#818cf8"/>
+    <rect x="30" y="94" width="28" height="12" rx="4" ry="4" fill="url(#busAccent)" stroke="#818cf8"/>
+  </g>
+</svg>

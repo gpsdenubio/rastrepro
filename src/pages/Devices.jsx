@@ -97,7 +97,7 @@ export default function Devices() {
   };
 
   return (
-    <div className="p-4 md:p-6 space-y-4 bg-slate-950 min-h-screen text-slate-100">
+    <div className="p-4 md:p-6 space-y-4 bg-slate-950 text-slate-100">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-100">Dispositivos</h1>
@@ -133,7 +133,7 @@ export default function Devices() {
       </div>
 
       <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl border border-slate-800 overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-auto max-h-[70vh]">
           <table className="min-w-full text-sm">
             <thead>
               <tr className="text-left text-slate-400 border-b border-slate-800">
@@ -145,9 +145,10 @@ export default function Devices() {
                 <th className="py-3 px-4">Placa</th>
                 <th className="py-3 px-4">Linha</th>
                 <th className="py-3 px-4">Status</th>
+                <th className="py-3 px-4">Bloqueio</th>
                 <th className="py-3 px-4">Última atualização</th>
                 <th className="py-3 px-4 text-right">Ações</th>
-                <th className="py-3 px-4 text-right">Bloqueio</th>
+                <th className="py-3 px-4 text-right">Comandos</th>
               </tr>
             </thead>
             <tbody className="[&>tr]:border-b [&>tr]:border-slate-800 text-slate-200">
@@ -182,6 +183,19 @@ export default function Devices() {
                         {d.status === "online" ? "Online" : d.status ? "Offline" : "Desconhecido"}
                       </span>
                     </td>
+                    <td className="py-3 px-4">
+                      {d.attributes?.engine === "stop" ? (
+                        <span className="px-2 py-1 rounded-full text-xs font-semibold bg-red-900/60 text-red-200 border border-red-700">
+                          Bloqueado
+                        </span>
+                      ) : d.attributes?.engine === "resume" ? (
+                        <span className="px-2 py-1 rounded-full text-xs font-semibold bg-emerald-900/60 text-emerald-200 border border-emerald-700">
+                          Desbloqueado
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-400">-</span>
+                      )}
+                    </td>
                     <td className="py-3 px-4">{formatDateTime(d.lastUpdate)}</td>
                     <td className="py-3 px-4 text-right space-x-2">
                       <button
@@ -198,7 +212,16 @@ export default function Devices() {
                       </button>
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <DeviceBlockActions device={d} onLog={handleLog} />
+                      <DeviceBlockActions
+                        device={d}
+                        onLog={handleLog}
+                        onDeviceUpdate={(updated) => {
+                          if (!updated) return;
+                          setDevices((prev) =>
+                            prev.map((dev) => (dev.id === updated.id ? updated : dev))
+                          );
+                        }}
+                      />
                     </td>
                   </tr>
                 ))

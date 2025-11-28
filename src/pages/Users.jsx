@@ -168,7 +168,7 @@ export default function Users() {
   };
 
   return (
-    <div className="p-4 space-y-4 bg-slate-950 min-h-screen text-slate-100">
+    <div className="p-4 space-y-4 bg-slate-950 text-slate-100">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-100">Usuários</h1>
@@ -207,7 +207,7 @@ export default function Users() {
       {error && <div className="text-red-400 text-sm">{error}</div>}
 
       <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl border border-slate-800 overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-auto max-h-[70vh]">
           <table className="min-w-full text-sm">
             <thead>
               <tr className="text-left text-slate-400 border-b border-slate-800">
@@ -344,40 +344,6 @@ export default function Users() {
           </table>
         </div>
       </div>
-
-      {isAdmin && (
-        <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl border border-slate-800 p-4 space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-100">Logs de sessões</h3>
-            <button
-              onClick={() => {
-                localStorage.removeItem("sessionLogs");
-                setSessionLogs([]);
-              }}
-              className="text-xs text-slate-400 hover:text-sky-300"
-            >
-              Limpar
-            </button>
-          </div>
-          {sessionLogs.length === 0 ? (
-            <div className="text-xs text-slate-500">Sem registros.</div>
-          ) : (
-            <div className="max-h-48 overflow-auto space-y-1 text-xs text-slate-300">
-              {sessionLogs.map((log, idx) => (
-                <div key={idx} className="flex items-start justify-between border-b border-slate-800 py-1">
-                  <div>
-                    <div className="font-semibold capitalize text-slate-100">{log.action || "-"}</div>
-                    <div className="text-slate-400">{log.username || "-"}</div>
-                  </div>
-                  <div className="text-[11px] text-slate-400">
-                    {log.time ? new Date(log.time).toLocaleString() : ""}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       <UserModal
         open={modalOpen}

@@ -51,6 +51,133 @@ const formatDistance = (value) => {
   return `${(meters / 1000).toFixed(1)} km`;
 };
 
+const formatDurationMs = (ms) => {
+  if (!ms || Number.isNaN(ms)) return "-";
+  const totalSeconds = Math.floor(ms / 1000);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return `${h}h ${m}m ${s}s`;
+};
+
+// Limpa paradas: velocidade zero, mínima 5 min, ignora intervalos muito longos (>2h)
+const cleanStopsReport = (list = []) => {
+  const MIN_MS = 5 * 60 * 1000;
+  const MAX_MS = 2 * 60 * 60 * 1000;
+  const sorted = [...list].sort((a, b) => {
+    const ta = new Date(a.startTime || a.deviceTime || a.time).getTime();
+    const tb = new Date(b.startTime || b.deviceTime || b.time).getTime();
+    return ta - tb;
+  });
+  return sorted
+    .map((item) => {
+      const start = new Date(item.startTime || item.deviceTime || item.time);
+      const end = new Date(item.endTime || item.serverTime || item.deviceTime || item.time);
+      const durationMs = end - start;
+      return { ...item, durationMs };
+    })
+    .filter((item) => {
+      const speedZero = (Number(item.speed) || 0) === 0 && (Number(item.averageSpeed) || 0) === 0;
+      if (!speedZero) return false;
+      if (item.durationMs < MIN_MS) return false;
+      if (item.durationMs > MAX_MS) return false; // ignora buracos de sinal muito longos
+      return true;
+    });
+};
+
+// Limpa viagens (trips): ignora buracos >2h, dupes sem deslocamento, duração real
+const cleanTripsReport = (list = []) => {
+  const MAX_GAP_MS = 2 * 60 * 60 * 1000;
+  return list
+    .map((item) => {
+      const start = new Date(item.startTime || item.deviceTime || item.time);
+      const end = new Date(item.endTime || item.serverTime || item.deviceTime || item.time);
+      const durationMs = end - start;
+      return { ...item, durationMs };
+    })
+    .filter((item, idx, arr) => {
+      if (item.durationMs <= 0) return false;
+      // ignora buracos muito longos sem pacotes
+      if (item.durationMs > MAX_GAP_MS) return false;
+      const prev = arr[idx - 1];
+      const samePath =
+        prev &&
+        prev.startLat === item.startLat &&
+        prev.startLon === item.startLon &&
+        prev.endLat === item.endLat &&
+        prev.endLon === item.endLon &&
+        (Number(item.distance) || 0) === 0;
+      if (samePath) return false;
+      return true;
+    });
+};
+
+// Remove pontos consecutivos repetidos (mesma lat/lon e velocidade 0)
+const cleanRoutePositions = (list = []) => {
+  const cleaned = [];
+  list.forEach((item) => {
+    const last = cleaned[cleaned.length - 1];
+    const sameCoord =
+      last &&
+      last.latitude === item.latitude &&
+      last.longitude === item.longitude &&
+      (Number(item.speed) || 0) === 0 &&
+      (Number(last.speed) || 0) === 0;
+    if (sameCoord) return;
+    cleaned.push(item);
+  });
+  return cleaned;
+};
+
+// Agrupa paradas longas consecutivas no mesmo ponto
+const groupStops = (list = []) => {
+  const grouped = [];
+  let buffer = [];
+
+  const flushBuffer = () => {
+    if (buffer.length === 0) return;
+    if (buffer.length === 1 || (Number(buffer[0].speed) || 0) !== 0) {
+      grouped.push(buffer[0]);
+      buffer = [];
+      return;
+    }
+    const first = buffer[0];
+    const last = buffer[buffer.length - 1];
+    grouped.push({
+      ...first,
+      startTime: first.serverTime || first.deviceTime || first.time,
+      endTime: last.serverTime || last.deviceTime || last.time,
+      durationMs:
+        new Date(last.serverTime || last.deviceTime || last.time).getTime() -
+        new Date(first.serverTime || first.deviceTime || first.time).getTime(),
+      speed: 0,
+      event: "Parado",
+      groupedStop: true,
+    });
+    buffer = [];
+  };
+
+  list.forEach((item) => {
+    const speedZero = (Number(item.speed) || 0) === 0;
+    if (speedZero) {
+      if (
+        buffer.length === 0 ||
+        (buffer[0].latitude === item.latitude && buffer[0].longitude === item.longitude)
+      ) {
+        buffer.push(item);
+        return;
+      }
+    }
+    flushBuffer();
+    buffer.push(item);
+    if (!speedZero) {
+      flushBuffer();
+    }
+  });
+  flushBuffer();
+  return grouped;
+};
+
 const formatCoords = (lat, lon) => {
   if (lat == null || lon == null) return "-";
   return `${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}`;
@@ -130,21 +257,23 @@ export default function Reports() {
     }
   };
 
-  const normalizeRows = (type, data) => {
-    if (!Array.isArray(data)) return [];
-    switch (type) {
-      case "route":
-        return data.map((item, idx) => ({
-          id: item.id || idx,
-          time: formatDateTime(item.serverTime || item.deviceTime || item.fixTime || item.time),
-          address: item.address || formatCoords(item.latitude, item.longitude),
-          speed: item.speed != null ? `${item.speed} km/h` : "-",
-          distance: formatDistance(item.attributes?.distance ?? item.distance ?? item.attributes?.totalDistance),
-          duration: "-",
-          event: "-",
-          lat: item.latitude,
-          lon: item.longitude,
-        }));
+const normalizeRows = (type, data) => {
+  if (!Array.isArray(data)) return [];
+  switch (type) {
+    case "route":
+      return data.map((item, idx) => ({
+        id: item.id || idx,
+        time: formatDateTime(item.startTime || item.serverTime || item.deviceTime || item.fixTime || item.time),
+        address: item.address || formatCoords(item.latitude, item.longitude),
+        speed: item.groupedStop ? "-" : item.speed != null ? `${item.speed} km/h` : "-",
+        distance: item.groupedStop
+          ? "-"
+          : formatDistance(item.attributes?.distance ?? item.distance ?? item.attributes?.totalDistance),
+        duration: item.groupedStop ? formatDurationMs(item.durationMs) : "-",
+        event: item.groupedStop ? "Parado" : "-",
+        lat: item.latitude,
+        lon: item.longitude,
+      }));
       case "trips":
         return data.map((item, idx) => ({
           id: item.id || idx,
@@ -154,7 +283,7 @@ export default function Reports() {
           }`,
           speed: item.maxSpeed != null ? `${item.maxSpeed} km/h` : "-",
           distance: formatDistance(item.distance),
-          duration: formatDuration(item.duration),
+          duration: formatDurationMs(item.durationMs ?? item.duration * 1000),
           event: "-",
         }));
       case "stops":
@@ -164,7 +293,7 @@ export default function Reports() {
           address: item.address || formatCoords(item.latitude, item.longitude),
           speed: "-",
           distance: "-",
-          duration: formatDuration(item.duration),
+          duration: formatDurationMs(item.durationMs ?? item.duration * 1000),
           event: "-",
         }));
       case "events":
@@ -192,17 +321,25 @@ export default function Reports() {
       const from = toIso(fromDate);
       const to = toIso(toDate);
       const data = await runReport(type, deviceId, from, to);
-      const normalized = normalizeRows(type, data);
+      const cleaned =
+        type === "route"
+          ? groupStops(cleanRoutePositions(data))
+          : type === "stops"
+          ? cleanStopsReport(data)
+          : type === "trips"
+          ? cleanTripsReport(data)
+          : data;
+      const normalized = normalizeRows(type, cleaned);
 
       setDataByType((prev) => ({
         ...prev,
         [type]: {
           rows: normalized,
-          raw: type === "route" ? data : prev[type]?.raw,
+          raw: type === "route" ? cleaned : prev[type]?.raw,
           mapPoints:
             type === "route"
               ? normalized
-                  .filter((r) => r.lat != null && r.lon != null)
+                  .filter((r) => r.lat != null && r.lon != null && !Number.isNaN(r.lat) && !Number.isNaN(r.lon))
                   .map((r) => [r.lat, r.lon])
               : prev[type]?.mapPoints,
         },
@@ -367,7 +504,7 @@ export default function Reports() {
   const currentReportLabel = reportCards.find((t) => t.value === activeTab)?.label || "Relatório";
 
   return (
-    <div className="p-4 md:p-6 space-y-4 bg-slate-950 min-h-screen text-slate-100">
+    <div className="p-4 md:p-6 space-y-4 bg-slate-950 text-slate-100">
       <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl p-4 border border-slate-800 space-y-4">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div>
@@ -557,7 +694,7 @@ export default function Reports() {
             <div className="text-slate-400 text-sm">Nenhum registro no período selecionado.</div>
           )}
 
-          <div className="overflow-x-auto">
+          <div className="overflow-auto max-h-[70vh]">
             <table className="min-w-full text-sm text-slate-200">
               <thead>
                 <tr className="text-left text-slate-400 border-b border-slate-800">

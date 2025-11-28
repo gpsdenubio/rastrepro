@@ -63,6 +63,21 @@ export default function EventToasts() {
     [deviceNameById, pushToast]
   );
 
+  // Permite toasts locais (ex: âncora)
+  useEffect(() => {
+    const handler = (e) => {
+      const detail = e.detail || {};
+      pushToast({
+        id: detail.id,
+        title: detail.title || "Aviso",
+        device: detail.device || "",
+        time: detail.time || new Date().toISOString(),
+      });
+    };
+    window.addEventListener("local:toast", handler);
+    return () => window.removeEventListener("local:toast", handler);
+  }, [pushToast]);
+
   useEventSocket({ onMessage: onSocketMessage, authHeader });
 
   if (!authHeader) return null;

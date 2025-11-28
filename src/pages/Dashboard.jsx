@@ -58,7 +58,7 @@ export default function Dashboard() {
   ];
 
   return (
-    <div className="p-4 md:p-6 space-y-6 bg-slate-950 min-h-screen text-slate-100">
+    <div className="p-4 md:p-6 space-y-6 bg-slate-950 text-slate-100">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-slate-100">Dashboard</h1>
@@ -96,50 +96,16 @@ export default function Dashboard() {
         ))}
       </div>
 
-      <div className="w-full">
+      <div className="w-full flex flex-col">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-lg font-semibold text-slate-100">Mapa de dispositivos</h2>
           <span className="text-xs text-slate-400">Tempo real</span>
         </div>
-        <div className="w-full min-h-[65vh] rounded-2xl overflow-hidden">
-          <MapView />
+        <div className="w-full rounded-2xl overflow-hidden flex" style={{ minHeight: "60vh", height: "60vh" }}>
+          <MapView height="100%" />
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        <div className="xl:col-span-2" />
-
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-[0_10px_30px_rgba(0,0,0,0.35)] p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-slate-100">Eventos recentes</h2>
-            <button className="text-xs text-sky-400 hover:text-sky-300" onClick={loadData}>
-              Atualizar
-            </button>
-          </div>
-          <div className="space-y-2 max-h-[360px] overflow-auto">
-            {events.length === 0 ? (
-              <div className="text-sm text-slate-400">Sem eventos recentes.</div>
-            ) : (
-              events.map((ev) => (
-                <div
-                  key={ev.id}
-                  className="flex items-center justify-between rounded-xl border border-slate-800 px-3 py-2 bg-slate-800/70"
-                >
-                  <div>
-                    <div className="text-sm font-semibold text-slate-100">{ev.type || "Evento"}</div>
-                    <div className="text-xs text-slate-400">
-                      {ev.deviceId ? `ID ${ev.deviceId}` : ""} {ev.address || ""}
-                    </div>
-                  </div>
-                  <div className="text-xs text-slate-400">
-                    {ev.eventTime ? new Date(ev.eventTime).toLocaleTimeString() : ""}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
