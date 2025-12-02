@@ -1,35 +1,160 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Marker, Tooltip, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
-import carIcon from "../assets/vehicle-icons/car.svg";
-import motorcycleIcon from "../assets/vehicle-icons/motorcycle.svg";
-import truckIcon from "../assets/vehicle-icons/truck.svg";
-import vanIcon from "../assets/vehicle-icons/van.svg";
-import pickupIcon from "../assets/vehicle-icons/pickup.svg";
-import busIcon from "../assets/vehicle-icons/bus.svg";
-import otherIcon from "../assets/vehicle-icons/other.svg";
 
-const typeToIcon = {
-  car: carIcon,
-  automobile: carIcon,
-  moto: motorcycleIcon,
-  motorcycle: motorcycleIcon,
-  bike: motorcycleIcon,
-  truck: truckIcon,
-  caminhao: truckIcon,
-  van: vanIcon,
-  vanette: vanIcon,
-  pickup: pickupIcon,
-  pickuptruck: pickupIcon,
-  camionete: pickupIcon,
-  bus: busIcon,
-  onibus: busIcon,
+const iconCache = new Map();
+
+const palette = {
+  "car-small": { body: "#3b82f6", roof: "#0f172a" },
+  "car-sedan": { body: "#1d4ed8", roof: "#0b1220" },
+  suv: { body: "#0ea5e9", roof: "#0f172a" },
+  pickup: { body: "#22c55e", roof: "#0f172a" },
+  moto: { body: "#f59e0b", roof: "#0f172a" },
+  "moto-delivery": { body: "#fb923c", roof: "#0f172a" },
+  van: { body: "#14b8a6", roof: "#0f172a" },
+  "truck-small": { body: "#8b5cf6", roof: "#0f172a" },
+  "truck-box": { body: "#6366f1", roof: "#0f172a" },
+  other: { body: "#94a3b8", roof: "#0f172a" },
+};
+
+const drawTopView = (typeKey) => {
+  const key = typeKey && palette[typeKey] ? typeKey : "other";
+  if (iconCache.has(key)) return iconCache.get(key);
+
+  const { body, roof } = palette[key];
+  const canvas = document.createElement("canvas");
+  const w = 54;
+  const h = 108;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+
+  // Body
+  ctx.fillStyle = body;
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  const radius = 10;
+  ctx.moveTo(5 + radius, 8);
+  ctx.arcTo(w - 5, 8, w - 5, h - 8, radius);
+  ctx.arcTo(w - 5, h - 8, 5, h - 8, radius);
+  ctx.arcTo(5, h - 8, 5, 8, radius);
+  ctx.arcTo(5, 8, w - 5, 8, radius);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Roof
+  ctx.fillStyle = roof;
+  ctx.strokeStyle = "#e2e8f0";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(12, 22, w - 24, h - 44, 8);
+  ctx.fill();
+  ctx.stroke();
+
+  // Windows
+  ctx.fillStyle = "#cfe4ff";
+  ctx.beginPath();
+  ctx.roundRect(14, 28, w - 28, 22, 6);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.roundRect(14, h - 56, w - 28, 22, 6);
+  ctx.fill();
+
+  // Wheels
+  ctx.fillStyle = "#111827";
+  ctx.beginPath();
+  ctx.ellipse(12, 20, 6, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(w - 12, 20, 6, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(12, h - 20, 6, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(w - 12, h - 20, 6, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Lights
+  ctx.fillStyle = "#fde047";
+  ctx.fillRect(18, 6, w - 36, 6);
+  ctx.fillStyle = "#ef4444";
+  ctx.fillRect(18, h - 12, w - 36, 6);
+
+  // Delivery box indicator for moto-delivery
+  if (key === "moto-delivery") {
+    ctx.fillStyle = "#f97316";
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(w / 2 - 10, h / 2 - 24, 20, 16, 4);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  const dataUrl = canvas.toDataURL("image/png");
+  iconCache.set(key, dataUrl);
+  return dataUrl;
+};
+
+const typeToKey = (type) => {
+  const key = (type || "").toLowerCase();
+  if (["car", "carro", "auto", "automobile", "carro pequeno"].includes(key)) return "car-small";
+  if (["sedan", "car-sedan"].includes(key)) return "car-sedan";
+  if (["suv"].includes(key)) return "suv";
+  if (["pickup", "camionete", "pickuptruck"].includes(key)) return "pickup";
+  if (["moto", "motorcycle", "bike"].includes(key)) return "moto";
+  if (["moto-delivery", "delivery"].includes(key)) return "moto-delivery";
+  if (["van", "vanette"].includes(key)) return "van";
+  if (["truck-small", "caminhao pequeno", "3/4", "caminhao 3/4"].includes(key)) return "truck-small";
+  if (["truck", "caminhao", "truck-box", "bau"].includes(key)) return "truck-box";
+  return "other";
+};
+
+// Ícones realistas por tipo (vista superior)
+const realisticIcons = {
+  car: "https://cdn-icons-png.flaticon.com/512/12689/12689302.png",
+  carro: "https://cdn-icons-png.flaticon.com/512/12689/12689302.png",
+  auto: "https://cdn-icons-png.flaticon.com/512/12689/12689302.png",
+  automobile: "https://cdn-icons-png.flaticon.com/512/12689/12689302.png",
+  moto: "https://www.pngwing.com/pngs/710/260/png-transparent-motorcycle-bike-racing-bike-top-view-motorcycle-scooter-thumbnail.png",
+  motorcycle: "https://www.pngwing.com/pngs/710/260/png-transparent-motorcycle-bike-racing-bike-top-view-motorcycle-scooter-thumbnail.png",
+  bike: "https://www.pngwing.com/pngs/710/260/png-transparent-motorcycle-bike-racing-bike-top-view-motorcycle-scooter-thumbnail.png",
+  caminhão: "/icons/caminhao.png",
+  caminhao: "/icons/caminhao.png",
+  truck: "/icons/caminhao.png",
+  carreta: "/icons/carreta.png",
+  truckbox: "/icons/carreta.png",
+  van: "/icons/van.png",
 };
 
 const getIconByType = (type) => {
-  if (!type) return otherIcon;
-  const key = String(type).toLowerCase();
-  return typeToIcon[key] || otherIcon;
+  const key = (type || "").toLowerCase().replace(/\s+/g, "");
+  const url = realisticIcons[key];
+  if (!url) return null;
+  return L.icon({
+    iconUrl: url,
+    iconSize: [48, 48],
+    iconAnchor: [24, 24],
+    popupAnchor: [0, -24],
+    className: "realistic-vehicle-top",
+  });
+};
+
+const detectTypeByName = (name = "") => {
+  const n = name.toLowerCase();
+  const has = (arr) => arr.some((w) => n.includes(w));
+
+  if (has(["cg", "titan", "twister", "biz", "fazer", "factor", "xre", "bros", "mt", "cb"])) return "moto";
+  if (has(["fh", "scania", "volvo", "mb", "constellation", "cargo", "iveco", "actros"])) return "caminhao";
+  if (has(["carreta", "bau", "graneleiro", "3 eixos", "9 eixos"])) return "carreta";
+  if (has(["hilux", "s10", "ranger", "amarok", "fiat toro", "toro"])) return "carro";
+  if (has(["onix", "gol", "uno", "polo", "hb20", "fiesta", "civic", "corolla", "sandero", "kwid"])) return "carro";
+  if (has(["sprinter", "ducato", "master", "jumper"])) return "van";
+  return null;
 };
 
 export default function RealisticVehicleMarker({
@@ -43,6 +168,7 @@ export default function RealisticVehicleMarker({
   usePopup = false,
   children,
   onClick,
+  device,
 }) {
   const map = useMap();
   const [zoom, setZoom] = useState(() => map?.getZoom?.() ?? 12);
@@ -54,8 +180,13 @@ export default function RealisticVehicleMarker({
   }, [map]);
 
   const icon = useMemo(() => {
-    const size = Math.min(72, Math.max(42, 42 + (zoom - 12) * 3));
-    const url = getIconByType(type);
+    const detectedType = device?.attributes?.tipo || detectTypeByName(device?.name) || type;
+    const customIcon = getIconByType(detectedType);
+    if (customIcon) return customIcon;
+
+    const size = Math.min(72, Math.max(48, 48 + (zoom - 12) * 3));
+    const iconKey = typeToKey(detectedType);
+    const url = drawTopView(iconKey);
     const statusClass = isBlocked ? "blocked" : status;
     const html = `
       <div class="realistic-vehicle ${speed > 1 ? "rv-moving" : ""} rv-status-${statusClass}" style="--icon-size:${size}px; --heading:${heading}deg;">

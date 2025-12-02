@@ -7,6 +7,7 @@ import EventToasts from "../components/EventToasts";
 
 export default function MainLayout({ children }) {
   const [open, setOpen] = useState(true);
+  const [userOverride, setUserOverride] = useState(false);
 
   // Dispara resize para componentes como Leaflet recalcularem tamanho ao encolher/expandir sidebar
   React.useEffect(() => {
@@ -16,23 +17,34 @@ export default function MainLayout({ children }) {
     return () => clearTimeout(id);
   }, [open]);
 
-  // Fecha o menu por padrão em mobile, mantém aberto em desktop
+  // Fecha o menu por padrão em mobile, mantém aberto em desktop.
+  // Respeita o toggle manual (userOverride).
   React.useEffect(() => {
     const sync = () => {
       const isDesktop = window.innerWidth >= 768;
-      setOpen(isDesktop);
+      if (!isDesktop) {
+        setOpen(false);
+        setUserOverride(false);
+      } else if (!userOverride) {
+        setOpen(true);
+      }
     };
     sync();
     window.addEventListener("resize", sync);
     return () => window.removeEventListener("resize", sync);
-  }, []);
+  }, [userOverride]);
+
+  const handleToggle = () => {
+    setUserOverride(true);
+    setOpen((prev) => !prev);
+  };
 
   return (
     <div className="flex h-screen overflow-hidden bg-gradient-to-br from-slate-900 via-slate-950 to-black text-slate-100">
       <Sidebar open={open} />
 
       <div className="flex flex-col flex-1 overflow-hidden">
-        <TopBar onToggleSidebar={() => setOpen((prev) => !prev)} />
+        <TopBar onToggleSidebar={handleToggle} />
         <main className="p-4 flex-1 overflow-y-auto overflow-x-hidden">
           <div className="max-w-7xl mx-auto w-full">
             {children || <Outlet />}

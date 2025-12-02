@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { createDevice, updateDevice } from "../services/traccar";
+import { createDevice, updateDevice, updateDeviceAttributes } from "../services/traccar";
 
 const categories = [
   { value: "car", label: "Carro" },
@@ -23,12 +23,22 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
     category: "car",
     plate: "",
     phone: "",
+    odometerKm: "",
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (device) {
+      const currentOdo =
+        device.totalDistance ??
+        device.attributes?.odometerBase ??
+        device.attributes?.odometer ??
+        device.attributes?.totalDistance;
+      const currentOdoKm =
+        currentOdo != null && !Number.isNaN(Number(currentOdo))
+          ? (Number(currentOdo) / 1000).toFixed(2)
+          : "";
       setForm({
         name: device.name || "",
         uniqueId: device.uniqueId || "",
@@ -36,6 +46,7 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
         category: device.category || "car",
         plate: device.attributes?.placa || "",
         phone: device.attributes?.linha || device.phone || "",
+        odometerKm: currentOdoKm,
       });
     } else {
       setForm({
@@ -45,6 +56,7 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
         category: "car",
         plate: "",
         phone: "",
+        odometerKm: "",
       });
     }
     setError("");
@@ -59,17 +71,38 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
     setSaving(true);
     setError("");
     try {
+      const odometerMeters =
+        form.odometerKm !== "" && !Number.isNaN(Number(form.odometerKm))
+          ? Number(form.odometerKm) * 1000
+          : undefined;
       const payload = {
         ...form,
         id: device?.id,
         groupId: device?.groupId,
         calendarId: device?.calendarId,
-        attributes: device?.attributes,
+        attributes: {
+          ...(device?.attributes || {}),
+        },
       };
       if (isEdit) {
-        await updateDevice(device.id, payload);
+        if (odometerMeters !== undefined) {
+          const attrs = {
+            ...(device?.attributes || {}),
+            odometer: odometerMeters,
+            odometerBase: odometerMeters,
+          };
+          await updateDeviceAttributes({
+            id: device.id,
+            name: device.name,
+            uniqueId: device.uniqueId,
+            category: device.category,
+            attributes: attrs,
+          });
+        } else {
+          await updateDevice(device.id, payload);
+        }
       } else {
-        await createDevice(form);
+        await createDevice(payload);
       }
       onSaved();
       onClose();
@@ -173,6 +206,28 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
                     onChange={(e) => handleChange("phone", e.target.value)}
                     className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
                   />
+                </label>
+                <label className="flex flex-col text-sm">
+                  Odômetro (km)
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={form.odometerKm}
+                    onChange={(e) => handleChange("odometerKm", e.target.value)}
+                    placeholder="Ex.: 12345.6"
+                    className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
+                  />
+                  <span className="text-[11px] text-slate-400 mt-1">
+                    Odômetro real: {(() => {
+                      const raw =
+                        device?.attributes?.odometer ??
+                        device?.attributes?.totalDistance ??
+                        device?.attributes?.odometerBase;
+                      const num = raw != null && !Number.isNaN(Number(raw)) ? Number(raw) / 1000 : null;
+                      return num != null ? `${num.toFixed(2)} km` : "-";
+                    })()}
+                  </span>
                 </label>
               </div>
             </section>

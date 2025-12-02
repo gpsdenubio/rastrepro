@@ -472,6 +472,28 @@ export default function MapView({ onSelectDevice, height }) {
               p.attributes?.address ||
               p.attributes?.formattedAddress ||
               (p.latitude && p.longitude ? `${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}` : "-");
+            const trackerRaw =
+              p.attributes?.batteryVoltage ??
+              p.attributes?.battery ??
+              p.attributes?.batteryLevel ??
+              d.attributes?.batteryVoltage ??
+              d.attributes?.battery ??
+              d.attributes?.batteryLevel ??
+              null;
+            const trackerLabel =
+              trackerRaw != null
+                ? typeof trackerRaw === "number" && trackerRaw > 0 && trackerRaw <= 100
+                  ? `Bateria do Rastreador: ${trackerRaw.toFixed(0)}%`
+                  : `Bateria do Rastreador: ${Number(trackerRaw).toFixed(1)} V`
+                : null;
+            const vehicleRaw =
+              p.attributes?.power ??
+              p.attributes?.deviceBattery ??
+              d.attributes?.power ??
+              d.attributes?.deviceBattery ??
+              null;
+            const vehicleLabel =
+              vehicleRaw != null ? `Bateria do Veículo: ${Number(vehicleRaw).toFixed(1)} V` : null;
             const anchor = anchorStates[d.id];
             const heading = p.course ?? p.attributes?.course ?? p.attributes?.bearing ?? 0;
             const type = (d.category || "").toLowerCase();
@@ -525,6 +547,7 @@ export default function MapView({ onSelectDevice, height }) {
                     ? "bus"
                     : d.attributes?.vehicleType || type || "car"
                 }
+                device={d}
                 status={markerStatus}
                 onClick={() => onSelectDevice && onSelectDevice(d, p)}
                 usePopup
@@ -545,6 +568,12 @@ export default function MapView({ onSelectDevice, height }) {
                       <span className="text-slate-400 text-[10px] uppercase tracking-wide">Velocidade</span>
                       <span className="font-semibold">{formatSpeed(p.speed)}</span>
                     </div>
+                    {trackerLabel && (
+                      <div className="text-[11px] text-slate-300 leading-snug">{trackerLabel}</div>
+                    )}
+                    {vehicleLabel && (
+                      <div className="text-[11px] text-slate-300 leading-snug">{vehicleLabel}</div>
+                    )}
                     <div className="flex items-center gap-2">
                       <span className="text-slate-400 text-[10px] uppercase tracking-wide">Ignição</span>
                       <span className="font-semibold">

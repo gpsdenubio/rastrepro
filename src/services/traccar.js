@@ -97,6 +97,8 @@ const reportEndpoints = {
   trips: "/reports/trips",
   stops: "/reports/stops",
   events: "/reports/events",
+  resumo: "/reports/summary",
+  summary: "/reports/summary",
 };
 
 export async function runReport(type, deviceId, from, to) {
@@ -121,7 +123,9 @@ export async function createDevice(data) {
       modelo: data.model,
       placa: data.plate,
       linha: data.phone,
+      ...(data.attributes || {}),
     },
+    ...(data.totalDistance !== undefined ? { totalDistance: data.totalDistance } : {}),
   };
   const res = await api.post("/devices", payload);
   return res.data;
@@ -145,9 +149,25 @@ export async function updateDevice(id, data) {
       modelo: pick(data.model, prev.modelo),
       placa: pick(data.plate, prev.placa),
       linha: pick(data.phone, prev.linha),
+      ...(data.attributes || {}),
     },
+    ...(data.totalDistance !== undefined ? { totalDistance: data.totalDistance } : {}),
   };
   const res = await api.put(`/devices/${id}`, payload);
+  return res.data;
+}
+
+// Atualiza somente atributos específicos (ex.: odômetro) sem alterar demais campos
+// Traccar exige ao menos name/uniqueId no PUT; use o snapshot atual do dispositivo.
+export async function updateDeviceAttributes(device) {
+  const payload = {
+    id: device.id,
+    name: device.name,
+    uniqueId: device.uniqueId,
+    category: device.category,
+    attributes: device.attributes || {},
+  };
+  const res = await api.put(`/devices/${device.id}`, payload);
   return res.data;
 }
 
