@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useEventSocket } from "../hooks/useEventSocket";
 import { useAuth } from "../context/AuthContext";
 import { getDevices, getEvents } from "../services/traccar";
@@ -8,7 +8,14 @@ export default function EventToasts() {
   const [devices, setDevices] = useState([]);
   const [toasts, setToasts] = useState([]);
   const [lastEventId, setLastEventId] = useState(null);
-  const [lastEventTime, setLastEventTime] = useState(() => new Date(Date.now() - 60 * 60 * 1000).toISOString());
+  const [lastEventTime, setLastEventTime] = useState(() => new Date(Date.now() - 10 * 60 * 1000).toISOString());
+  const seenIdsRef = useRef(new Set());
+  const audioRef = useRef(null);
+  const [muted, setMuted] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const a = localStorage.getItem("alertsMuted");
+    return a === "true";
+  });
 
   const toIso = (d) => {
     if (!d) return "";
@@ -35,8 +42,19 @@ export default function EventToasts() {
     load();
   }, []);
 
+  useEffect(() => {
+    const handler = (e) => {
+      const next = !!e.detail;
+      setMuted(next);
+    };
+    window.addEventListener("alerts:mute", handler);
+    return () => window.removeEventListener("alerts:mute", handler);
+  }, []);
+
   const pushToast = useCallback((payload) => {
     const id = payload.id || `${Date.now()}-${Math.random()}`;
+    if (seenIdsRef.current.has(id)) return;
+    seenIdsRef.current.add(id);
     setToasts((prev) => {
       const next = [{ ...payload, id }, ...prev].slice(0, 5);
       return next;
@@ -44,6 +62,15 @@ export default function EventToasts() {
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 8000);
+    // toca som
+    if (!muted && audioRef.current) {
+      try {
+        audioRef.current.currentTime = 0;
+        audioRef.current.play().catch(() => {});
+      } catch (err) {
+        // silencioso
+      }
+    }
   }, []);
 
   const onSocketMessage = useCallback(
@@ -113,7 +140,7 @@ export default function EventToasts() {
     let active = true;
     const poll = async () => {
       try {
-        const from = toIso(lastEventTime || new Date(Date.now() - 60 * 60 * 1000));
+        const from = toIso(lastEventTime || new Date(Date.now() - 10 * 60 * 1000));
         const to = toIso(new Date());
         const events = await getEvents({ from, to });
         if (!active || !Array.isArray(events)) return;
@@ -153,21 +180,24 @@ export default function EventToasts() {
   if (!authHeader) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 z-[2000] flex flex-col gap-2 max-w-xs">
-      {toasts.map((t) => (
-        <div
-          key={t.id}
-          className="bg-slate-900/95 text-white rounded-2xl shadow-2xl p-3 text-sm border border-sky-500/20"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <span className="font-semibold">{t.title}</span>
-            <span className="text-[11px] text-slate-200">
-              {t.time ? new Date(t.time).toLocaleTimeString() : ""}
-            </span>
+    <>
+      <audio ref={audioRef} src="https://actions.google.com/sounds/v1/alarms/beep_short.ogg" preload="auto" />
+      <div className="fixed bottom-4 right-4 z-[2000] flex flex-col gap-2 max-w-xs">
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className="bg-slate-900/95 text-white rounded-2xl shadow-2xl p-3 text-sm border border-sky-500/20"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-semibold">{t.title}</span>
+              <span className="text-[11px] text-slate-200">
+                {t.time ? new Date(t.time).toLocaleTimeString() : ""}
+              </span>
+            </div>
+            <div className="text-xs text-slate-200 mt-1">{t.device}</div>
           </div>
-          <div className="text-xs text-slate-200 mt-1">{t.device}</div>
-        </div>
-      ))}
-    </div>
+        ))}
+      </div>
+    </>
   );
 }

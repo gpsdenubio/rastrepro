@@ -199,6 +199,17 @@ export async function getPermissions(params = {}) {
   }
 }
 
+// ➤ Auditoria
+export async function getAuditLogs(params = {}) {
+  try {
+    const res = await api.get("/audit", { params });
+    return Array.isArray(res.data) ? res.data : [];
+  } catch (err) {
+    console.error("Erro ao obter auditoria:", err);
+    return [];
+  }
+}
+
 export async function createUser(data) {
   const buildAttrs = () => ({
     ...(data.attributes || {}),

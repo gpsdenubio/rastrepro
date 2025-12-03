@@ -11,6 +11,8 @@ import MapView from "./pages/MapView";
 import Alerts from "./pages/Alerts";
 import Logout from "./pages/Logout";
 import DashboardPage from "./pages/Dashboard";
+import Audit from "./pages/Audit";
+import Settings from "./pages/Settings";
 
 import MainLayout from "./layouts/MainLayout";
 import { useAuth } from "./context/AuthContext";
@@ -39,6 +41,8 @@ export default function App() {
             <Route path="/reports" element={<Reports />} />
             <Route path="/map" element={<MapView />} />
             <Route path="/alerts" element={<Alerts />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="/audit" element={<Audit />} />
           </Route>
           <Route path="/logout" element={<Logout />} />
           <Route path="*" element={<Navigate to="/" replace />} />

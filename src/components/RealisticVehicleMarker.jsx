@@ -120,9 +120,9 @@ const realisticIcons = {
   carro: "https://cdn-icons-png.flaticon.com/512/12689/12689302.png",
   auto: "https://cdn-icons-png.flaticon.com/512/12689/12689302.png",
   automobile: "https://cdn-icons-png.flaticon.com/512/12689/12689302.png",
-  moto: "https://www.pngwing.com/pngs/710/260/png-transparent-motorcycle-bike-racing-bike-top-view-motorcycle-scooter-thumbnail.png",
-  motorcycle: "https://www.pngwing.com/pngs/710/260/png-transparent-motorcycle-bike-racing-bike-top-view-motorcycle-scooter-thumbnail.png",
-  bike: "https://www.pngwing.com/pngs/710/260/png-transparent-motorcycle-bike-racing-bike-top-view-motorcycle-scooter-thumbnail.png",
+  moto: "https://cdn.pixabay.com/photo/2013/07/12/18/57/motorcycle-153914_1280.png",
+  motorcycle: "https://cdn.pixabay.com/photo/2013/07/12/18/57/motorcycle-153914_1280.png",
+  bike: "https://cdn.pixabay.com/photo/2013/07/12/18/57/motorcycle-153914_1280.png",
   caminhão: "/icons/caminhao.png",
   caminhao: "/icons/caminhao.png",
   truck: "/icons/caminhao.png",
@@ -184,6 +184,27 @@ export default function RealisticVehicleMarker({
     const customIcon = getIconByType(detectedType);
     if (customIcon) return customIcon;
 
+    const speedBadge =
+      Number.isFinite(Number(speed)) && Number(speed) > 0
+        ? `<div style="
+            position:absolute;
+            top:-6px;
+            right:-6px;
+            width:26px;
+            height:26px;
+            border-radius:999px;
+            background:rgba(15,23,42,0.92);
+            color:#e2e8f0;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            font-size:11px;
+            font-weight:700;
+            border:1px solid rgba(148,163,184,0.6);
+            box-shadow:0 6px 14px rgba(0,0,0,0.35);
+          ">${Math.round(Number(speed))}</div>`
+        : "";
+
     const size = Math.min(72, Math.max(48, 48 + (zoom - 12) * 3));
     const iconKey = typeToKey(detectedType);
     const url = drawTopView(iconKey);
@@ -192,6 +213,7 @@ export default function RealisticVehicleMarker({
       <div class="realistic-vehicle ${speed > 1 ? "rv-moving" : ""} rv-status-${statusClass}" style="--icon-size:${size}px; --heading:${heading}deg;">
         <img src="${url}" alt="vehicle" draggable="false" />
         <div class="rv-status-dot dot-${statusClass}"></div>
+        ${speedBadge}
       </div>
     `;
     return L.divIcon({

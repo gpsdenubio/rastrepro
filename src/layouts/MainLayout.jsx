@@ -5,8 +5,13 @@ import Sidebar from "../components/Sidebar";
 import TopBar from "../components/TopBar";
 import EventToasts from "../components/EventToasts";
 
+const initialOpen = () => {
+  if (typeof window === "undefined") return true;
+  return window.innerWidth >= 768;
+};
+
 export default function MainLayout({ children }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(initialOpen);
   const [userOverride, setUserOverride] = useState(false);
 
   // Dispara resize para componentes como Leaflet recalcularem tamanho ao encolher/expandir sidebar
@@ -22,12 +27,7 @@ export default function MainLayout({ children }) {
   React.useEffect(() => {
     const sync = () => {
       const isDesktop = window.innerWidth >= 768;
-      if (!isDesktop) {
-        setOpen(false);
-        setUserOverride(false);
-      } else if (!userOverride) {
-        setOpen(true);
-      }
+      if (!userOverride) setOpen(isDesktop);
     };
     sync();
     window.addEventListener("resize", sync);

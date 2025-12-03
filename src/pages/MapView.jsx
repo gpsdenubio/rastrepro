@@ -24,6 +24,14 @@ L.Icon.Default.mergeOptions({
     "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
 });
 
+const formatCoords = (lat, lon) => {
+  if (lat == null || lon == null || Number.isNaN(lat) || Number.isNaN(lon)) return "-";
+  const nLat = Number(lat);
+  const nLon = Number(lon);
+  if (!Number.isFinite(nLat) || !Number.isFinite(nLon)) return "-";
+  return `${nLat.toFixed(5)}, ${nLon.toFixed(5)}`;
+};
+
 function FitMapView({ positions, lastInteractionRef }) {
   const map = useMap();
   const [hasFitted, setHasFitted] = useState(false);
@@ -57,6 +65,7 @@ function FitMapView({ positions, lastInteractionRef }) {
 
 export default function MapView({ onSelectDevice, height }) {
   const lastInteractionRef = useRef(0);
+  const batteryCacheRef = useRef({});
   const [devices, setDevices] = useState([]);
   const [positions, setPositions] = useState([]);
   const [matchedPositions, setMatchedPositions] = useState([]);
@@ -83,6 +92,15 @@ export default function MapView({ onSelectDevice, height }) {
     return {};
   });
   const [actionLoading, setActionLoading] = useState(null);
+  const [streetViewUrl, setStreetViewUrl] = useState(null);
+
+  const openStreetViewInside = (lat, lon) => {
+    if (lat == null || lon == null) return;
+    const url = `https://maps.google.com/maps?q=&layer=c&cbll=${lat},${lon}&cbp=11,0,0,0,0&output=svembed`;
+    setStreetViewUrl(url);
+  };
+
+  const closeStreetView = () => setStreetViewUrl(null);
   const mapMatchCacheRef = useRef(new Map());
   const mergingPositionsRef = useRef(false);
 
@@ -525,6 +543,30 @@ export default function MapView({ onSelectDevice, height }) {
               }
             };
 
+            const cache = batteryCacheRef.current;
+            const rawLevel = Number(
+              d?.attributes?.batteryLevel ??
+              p?.attributes?.batteryLevel ??
+              p?.batteryLevel
+            );
+            const rawVoltage = Number(
+              d?.attributes?.battery ??
+              d?.attributes?.batteryLevelVolts ??
+              p?.attributes?.battery ??
+              p?.attributes?.batteryLevelVolts ??
+              p?.batteryLevelVolts ??
+              p?.battery
+            );
+            const previous = cache[d.id] || {};
+            const batteryLevel = Number.isFinite(rawLevel) ? rawLevel : previous.level;
+            const batteryVoltage = Number.isFinite(rawVoltage) ? rawVoltage : previous.voltage;
+            if (Number.isFinite(rawLevel) || Number.isFinite(rawVoltage)) {
+              cache[d.id] = {
+                level: Number.isFinite(rawLevel) ? rawLevel : previous.level,
+                voltage: Number.isFinite(rawVoltage) ? rawVoltage : previous.voltage,
+              };
+            }
+
             return (
               <RealisticVehicleMarker
                 key={d.id}
@@ -548,96 +590,119 @@ export default function MapView({ onSelectDevice, height }) {
                     : d.attributes?.vehicleType || type || "car"
                 }
                 device={d}
-                status={markerStatus}
-                onClick={() => onSelectDevice && onSelectDevice(d, p)}
-                usePopup
-              >
-                <div className="text-xs bg-slate-900/95 backdrop-blur-sm border border-slate-700 rounded-xl shadow-[0_10px_30px_rgba(0,0,0,0.45)] p-3 min-w-[220px] text-slate-100">
-                  <div className="flex items-center justify-between">
-                    <div className="font-semibold">{d.name || "Sem nome"}</div>
-                    <span className={`text-[10px] px-2 py-1 rounded-full border ${
-                      isOnline
-                        ? "bg-emerald-900/60 text-emerald-200 border-emerald-600"
-                        : "bg-slate-800 text-slate-200 border-slate-600"
-                    }`}>
-                      {isOnline ? "Online" : "Offline"}
+              onClick={() => onSelectDevice && onSelectDevice(d, p)}
+              usePopup
+            >
+              <div className="text-xs bg-slate-900/95 backdrop-blur-sm border border-slate-700 rounded-xl shadow-[0_10px_30px_rgba(0,0,0,0.45)] p-3 min-w-[220px] text-slate-100 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-semibold truncate">{d.name || "Sem nome"}</div>
+                  <div className="flex items-center gap-2">
+                    <span
+                      title={isOnline ? "Online" : "Offline"}
+                      className="text-lg"
+                    >
+                      {isOnline ? "🟢" : "🔴"}
+                    </span>
+                    <span
+                      title="Bateria"
+                      className={`text-sm font-semibold px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 ${
+                        batteryLevel > 59
+                          ? "text-emerald-300"
+                          : batteryLevel > 29
+                          ? "text-yellow-300"
+                          : "text-red-300"
+                      }`}
+                    >
+                      {Number.isFinite(batteryLevel) ? `${Math.round(batteryLevel)}%` : "--"}
+                      {Number.isFinite(batteryVoltage) ? ` • ${batteryVoltage.toFixed(1)}V` : ""}
+                    </span>
+                    <span
+                      title="Velocidade"
+                      className="text-sm font-semibold px-2 py-1 rounded-lg bg-slate-800 border border-slate-700"
+                    >
+                      {formatSpeed(p.speed)}
                     </span>
                   </div>
-                  <div className="mt-2 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-400 text-[10px] uppercase tracking-wide">Velocidade</span>
-                      <span className="font-semibold">{formatSpeed(p.speed)}</span>
-                    </div>
-                    {trackerLabel && (
-                      <div className="text-[11px] text-slate-300 leading-snug">{trackerLabel}</div>
-                    )}
-                    {vehicleLabel && (
-                      <div className="text-[11px] text-slate-300 leading-snug">{vehicleLabel}</div>
-                    )}
-                    <div className="flex items-center gap-2">
-                      <span className="text-slate-400 text-[10px] uppercase tracking-wide">Ignição</span>
-                      <span className="font-semibold">
-                        {ignition === true ? "Ligada" : ignition === false ? "Desligada" : "-"}
-                      </span>
-                    </div>
-                    <div className="text-[11px] text-slate-300 leading-snug">
-                      {address !== "-" ? address : "Sem endereço disponível"}
-                    </div>
-                    <div className="text-[10px] text-slate-400">
-                      {p.deviceTime ? new Date(p.deviceTime).toLocaleString() : "-"}
-                    </div>
-                    {anchor?.active && (
-                      <div className="flex items-center gap-1 text-[10px] text-sky-200 mt-1">
-                        <span className="px-2 py-1 rounded-full border border-sky-500/60 bg-sky-900/40 text-[10px]">
-                          Âncora ativa
-                        </span>
-                        {anchor.mode === "block" && <span title="Bloqueio automático">⚠️</span>}
-                      </div>
-                    )}
-                    <div className="mt-2 flex gap-2">
-                      {!anchor?.active ? (
-                        <button
-                          onClick={() => setAnchorModal({ open: true, device: d, position: p })}
-                          className="text-[11px] px-2 py-1 rounded-[8px] border border-sky-600 text-sky-200 hover:bg-sky-800/50"
-                        >
-                          Ativar Âncora
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() =>
-                            setAnchorStates((prev) => {
-                              const next = { ...prev };
-                              delete next[d.id];
-                              return next;
-                            })
-                          }
-                          className="text-[11px] px-2 py-1 rounded-[8px] border border-red-600 text-red-200 hover:bg-red-800/40"
-                        >
-                          Desativar Âncora
-                        </button>
-                      )}
-                      <div className="flex gap-2">
-                        <button
-                          onClick={handleBlock}
-                          disabled={actionLoading === d.id}
-                          className="text-[11px] px-3 py-1 rounded-[8px] border border-red-500 text-red-200 hover:bg-red-800/40 disabled:opacity-50"
-                        >
-                          {actionLoading === d.id && isBlocked ? "Enviando..." : "Bloquear"}
-                        </button>
-                        <button
-                          onClick={handleUnblock}
-                          disabled={actionLoading === d.id}
-                          className="text-[11px] px-3 py-1 rounded-[8px] border border-emerald-500 text-emerald-200 hover:bg-emerald-800/30 disabled:opacity-50"
-                        >
-                          {actionLoading === d.id && !isBlocked ? "Enviando..." : "Desbloquear"}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
                 </div>
-              </RealisticVehicleMarker>
-            );
-          })}
+                <div className="text-[11px] text-slate-300 flex items-center gap-1">
+                  <span>📍</span>
+                  <span className="truncate">{formatCoords(p.latitude, p.longitude)}</span>
+                </div>
+                <div className="text-[11px] text-slate-400 flex items-center gap-1">
+                  <span>🕒</span>
+                  <span>{p.deviceTime ? new Date(p.deviceTime).toLocaleString() : "-"}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span
+                    title={
+                      ignition === true
+                        ? "Ignição ligada"
+                        : ignition === false
+                        ? "Ignição desligada"
+                        : "Ignição desconhecida"
+                    }
+                    className={`h-9 w-9 text-lg rounded-lg border flex items-center justify-center ${
+                      ignition === true
+                        ? "text-emerald-300 border-emerald-500/60 bg-emerald-900/30"
+                        : ignition === false
+                        ? "text-red-300 border-red-500/60 bg-red-900/30"
+                        : "text-slate-300 border-slate-600 bg-slate-800/60"
+                    }`}
+                  >
+                    🔑
+                  </span>
+                  <button
+                    title={anchor?.active ? "Desativar âncora" : "Ativar âncora"}
+                    onClick={() => {
+                      if (anchor?.active) {
+                        setAnchorStates((prev) => {
+                          const next = { ...prev };
+                          delete next[d.id];
+                          return next;
+                        });
+                      } else {
+                        setAnchorModal({ open: true, device: d, position: p });
+                      }
+                    }}
+                    className={`h-9 w-9 rounded-lg border text-lg flex items-center justify-center ${
+                      anchor?.active
+                        ? "border-sky-500 text-sky-200 bg-sky-900/40"
+                        : "border-slate-600 text-slate-200 bg-slate-800/70"
+                    }`}
+                  >
+                    ⚓
+                  </button>
+                  <button
+                    title="Bloquear"
+                    onClick={handleBlock}
+                    disabled={actionLoading === d.id}
+                    className="h-9 w-9 rounded-lg border border-red-500 text-red-200 bg-red-900/30 hover:bg-red-900/50 disabled:opacity-50 text-lg flex items-center justify-center"
+                  >
+                    🔒
+                  </button>
+                  <button
+                    title="Desbloquear"
+                    onClick={handleUnblock}
+                    disabled={actionLoading === d.id}
+                    className="h-9 w-9 rounded-lg border border-emerald-500 text-emerald-200 bg-emerald-900/30 hover:bg-emerald-900/50 disabled:opacity-50 text-lg flex items-center justify-center"
+                  >
+                    🔓
+                  </button>
+                  <button
+                    title="Ver foto da rua"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openStreetViewInside(p.latitude, p.longitude);
+                    }}
+                    className="h-9 w-9 rounded-lg border border-sky-500 text-sky-200 bg-sky-900/30 hover:bg-sky-900/50 text-lg flex items-center justify-center"
+                  >
+                    🌐
+                  </button>
+                </div>
+              </div>
+            </RealisticVehicleMarker>
+          );
+        })}
         </MapContainer>
 
         <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-2 pointer-events-none">
@@ -673,6 +738,28 @@ export default function MapView({ onSelectDevice, height }) {
           ))}
         </div>
       </div>
+
+      {streetViewUrl && (
+        <div className="fixed bottom-4 right-4 z-[99999] w-[380px] h-[250px]">
+          <div className="relative w-full h-full bg-slate-900 border border-slate-700 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.55)] overflow-hidden">
+            <button
+              onClick={closeStreetView}
+              className="absolute top-2 right-2 z-10 w-8 h-8 rounded-full bg-slate-800 text-slate-200 text-sm font-bold border border-slate-600 hover:bg-slate-700"
+            >
+              ×
+            </button>
+            <iframe
+              title="Street View"
+              src={streetViewUrl}
+              width="100%"
+              height="100%"
+              allowFullScreen
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+            />
+          </div>
+        </div>
+      )}
 
       {anchorModal.open && (
         <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/60 backdrop-blur-sm">

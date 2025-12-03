@@ -1,16 +1,7 @@
 // src/components/Sidebar.jsx
 import React from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import {
-  Home,
-  MapPin,
-  List,
-  Bell,
-  LogOut,
-  Users,
-  FileText,
-  Settings,
-} from "lucide-react";
+import { Home, MapPin, List, Bell, LogOut, Users, FileText, Settings } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
 export default function Sidebar({ open }) {
@@ -27,7 +18,7 @@ export default function Sidebar({ open }) {
     { to: "/reports", label: "Relatórios", icon: <FileText size={18} /> },
     { to: "/alerts", label: "Eventos", icon: <Bell size={18} /> },
     { to: "/map", label: "Mapa", icon: <MapPin size={18} /> },
-    { to: "/dashboard", label: "Configurações", icon: <Settings size={18} /> },
+    { to: "/settings", label: "Configurações", icon: <Settings size={18} /> },
   ];
 
   return (

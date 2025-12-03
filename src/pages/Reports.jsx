@@ -1,6 +1,6 @@
 // src/pages/Reports.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import { MapContainer, TileLayer, Polyline, Popup, Marker } from "react-leaflet";
+import { MapContainer, TileLayer, Polyline, Popup, Marker, CircleMarker } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import { getDevices, runReport, getAddressFromTraccar } from "../services/traccar";
@@ -424,6 +424,77 @@ const formatCoords = (lat, lon) => {
   return `${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}`;
 };
 
+const smoothPath = (points = [], segments = 8) => {
+  if (!Array.isArray(points) || points.length < 3) {
+    return points.map((p) =>
+      Array.isArray(p) ? { lat: p[0], lon: p[1], speed: 0, time: null } : p
+    );
+  }
+
+  const getLat = (p) => (Array.isArray(p) ? p[0] : p.lat);
+  const getLon = (p) => (Array.isArray(p) ? p[1] : p.lon);
+  const getSpeed = (p) => (Array.isArray(p) ? 0 : p.speed || 0);
+  const getTimeMs = (p) => {
+    if (Array.isArray(p)) return null;
+    const t = p.time ? new Date(p.time).getTime() : null;
+    return Number.isNaN(t) ? null : t;
+  };
+
+  const catmull = (p0, p1, p2, p3, t) => {
+    const t2 = t * t;
+    const t3 = t2 * t;
+    const speedHold = getSpeed(p1); // mantém velocidade do ponto, sem diluir picos
+    const tm1 = getTimeMs(p1);
+    const tm2 = getTimeMs(p2);
+    const timeLerp =
+      tm1 != null && tm2 != null ? tm1 + (tm2 - tm1) * t : tm1 ?? tm2 ?? null;
+    const x =
+      0.5 *
+      ((2 * getLon(p1)) +
+        (-getLon(p0) + getLon(p2)) * t +
+        (2 * getLon(p0) - 5 * getLon(p1) + 4 * getLon(p2) - getLon(p3)) * t2 +
+        (-getLon(p0) + 3 * getLon(p1) - 3 * getLon(p2) + getLon(p3)) * t3);
+    const y =
+      0.5 *
+      ((2 * getLat(p1)) +
+        (-getLat(p0) + getLat(p2)) * t +
+        (2 * getLat(p0) - 5 * getLat(p1) + 4 * getLat(p2) - getLat(p3)) * t2 +
+        (-getLat(p0) + 3 * getLat(p1) - 3 * getLat(p2) + getLat(p3)) * t3);
+    return {
+      lat: y,
+      lon: x,
+      speed: speedHold,
+      time: timeLerp ? new Date(timeLerp).toISOString() : null,
+    };
+  };
+
+  const res = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i - 1] || points[i];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[i + 2] || p2;
+    res.push({
+      lat: getLat(p1),
+      lon: getLon(p1),
+      speed: getSpeed(p1),
+      time: getTimeMs(p1) ? new Date(getTimeMs(p1)).toISOString() : null,
+    });
+    for (let tStep = 1; tStep < segments; tStep++) {
+      const t = tStep / segments;
+      res.push(catmull(p0, p1, p2, p3, t));
+    }
+  }
+  const last = points[points.length - 1];
+  res.push({
+    lat: getLat(last),
+    lon: getLon(last),
+    speed: getSpeed(last),
+    time: getTimeMs(last) ? new Date(getTimeMs(last)).toISOString() : null,
+  });
+  return res;
+};
+
 export default function Reports() {
   const [devices, setDevices] = useState([]);
   const [selectedDevice, setSelectedDevice] = useState("");
@@ -705,9 +776,27 @@ const normalizeRows = (type, data) => {
           route: {
             rows: normalized,
             raw: routeClean,
-            mapPoints: routeClean
-              .filter((r) => r.latitude != null && r.longitude != null && !Number.isNaN(r.latitude) && !Number.isNaN(r.longitude))
-              .map((r) => [r.latitude, r.longitude]),
+              mapPoints: smoothPath(
+                routeClean
+                  .filter((r) => r.latitude != null && r.longitude != null && !Number.isNaN(r.latitude) && !Number.isNaN(r.longitude))
+                  .map((r) => ({
+                    lat: r.latitude,
+                  lon: r.longitude,
+                  speed: (() => {
+                    const speedKmhAttr = Number(r?.attributes?.speedKmh);
+                    if (Number.isFinite(speedKmhAttr) && speedKmhAttr > 0) return speedKmhAttr;
+                    const rawKnots = Number(
+                      r.speed ??
+                        r.attributes?.speed ??
+                        r.position?.speed
+                    );
+                    if (!Number.isFinite(rawKnots) || rawKnots <= 0) return null;
+                    // Traccar envia speed em nós quando não há speedKmh; converte apenas uma vez
+                    return rawKnots * 1.852;
+                  })(),
+                  time: r.deviceTime || r.serverTime || r.fixTime || r.time,
+                }))
+            ),
           },
         }));
       } else {
@@ -772,6 +861,7 @@ const normalizeRows = (type, data) => {
   }, [activeTab, selectedDevice, fromDate, toDate]);
 
 
+
   const selectedDeviceName = useMemo(() => {
     const found = devices.find((d) => d.id === Number(selectedDevice));
     return found?.name || found?.uniqueId || "Dispositivo";
@@ -832,6 +922,17 @@ const normalizeRows = (type, data) => {
         iconAnchor: [12, 41],
         popupAnchor: [1, -34],
         shadowSize: [41, 41],
+      }),
+    []
+  );
+  const arrowIcon = useMemo(
+    () =>
+      L.divIcon({
+        className: "",
+        html:
+          '<div style="width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:12px solid #38bdf8;transform:rotate(0deg);"></div>',
+        iconSize: [12, 12],
+        iconAnchor: [6, 6],
       }),
     []
   );
@@ -1076,17 +1177,116 @@ const normalizeRows = (type, data) => {
           </div>
 
           <div className="h-96 rounded-lg overflow-hidden border border-slate-800">
-            <MapContainer center={mapPoints[0]} zoom={13} style={{ height: "100%", width: "100%" }}>
+            <MapContainer
+              center={[mapPoints[0].lat, mapPoints[0].lon]}
+              zoom={13}
+              style={{ height: "100%", width: "100%" }}
+            >
               <TileLayer
                 key={currentLayer.id}
                 url={currentLayer.url}
                 attribution={currentLayer.attribution}
                 subdomains={currentLayer.subdomains}
               />
-              <Polyline positions={mapPoints} color="blue" weight={4} />
+              <Polyline
+                positions={mapPoints.map((p) => [p.lat, p.lon])}
+                color="#38bdf8"
+                weight={3}
+                opacity={0.9}
+                lineCap="round"
+              />
+              {mapPoints.map((p, idx) => (
+                <CircleMarker
+                  key={`pt-${idx}`}
+                  center={[p.lat, p.lon]}
+                  radius={4}
+                  weight={0}
+                  fillColor="#38bdf8"
+                  fillOpacity={0.4}
+                >
+                  <Popup closeButton={false} className="!bg-transparent !border-none !shadow-none !p-0">
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        gap: "6px",
+                        padding: "2px",
+                      }}
+                    >
+                      {Number.isFinite(Number(p.speed)) && Number(p.speed) > 0 ? (
+                        <div
+                          style={{
+                            minWidth: "30px",
+                            height: "30px",
+                            borderRadius: "10px",
+                            background: "linear-gradient(145deg, rgba(11,17,32,0.95), rgba(15,23,42,0.9))",
+                            color: "#e2e8f0",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: "12px",
+                            fontWeight: 800,
+                            border: "1px solid rgba(56,189,248,0.48)",
+                            boxShadow: "0 6px 16px rgba(0,0,0,0.3), 0 0 0 1px rgba(56,189,248,0.08)",
+                            padding: "0 8px",
+                            lineHeight: 1.1,
+                            backdropFilter: "blur(6px)",
+                          }}
+                        >
+                          <div style={{ textAlign: "center" }}>
+                            <div style={{ fontFamily: "inherit" }}>{Math.round(Number(p.speed))}</div>
+                            <div style={{ fontSize: "9px", fontWeight: 700, color: "#bae6fd", fontFamily: "inherit" }}>
+                              km/h
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          style={{
+                            minWidth: "26px",
+                            height: "26px",
+                            borderRadius: "9px",
+                            background: "rgba(15,23,42,0.85)",
+                            color: "#94a3b8",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: "11px",
+                            fontWeight: 600,
+                            border: "1px solid rgba(148,163,184,0.35)",
+                            boxShadow: "0 5px 12px rgba(0,0,0,0.25)",
+                            padding: "0 6px",
+                            backdropFilter: "blur(6px)",
+                          }}
+                        >
+                          -
+                        </div>
+                      )}
+                      {p.time ? (
+                        <div
+                          style={{
+                            padding: "6px 10px",
+                            borderRadius: "10px",
+                            background: "linear-gradient(145deg, rgba(11,17,32,0.95), rgba(17,24,39,0.9))",
+                            color: "#e2e8f0",
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            border: "1px solid rgba(148,163,184,0.4)",
+                            boxShadow: "0 8px 14px rgba(0,0,0,0.26), 0 0 0 1px rgba(56,189,248,0.06)",
+                            backdropFilter: "blur(6px)",
+                          }}
+                        >
+                          {formatRawTime(p.time)}
+                        </div>
+                      ) : null}
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              ))}
               <RealisticVehicleMarker
-                latitude={mapPoints[0][0]}
-                longitude={mapPoints[0][1]}
+                latitude={mapPoints[0].lat}
+                longitude={mapPoints[0].lon}
                 type={selectedDeviceType}
                 speed={0}
                 status="online"
@@ -1095,8 +1295,8 @@ const normalizeRows = (type, data) => {
                 <div className="text-xs text-slate-100">Início</div>
               </RealisticVehicleMarker>
               <RealisticVehicleMarker
-                latitude={mapPoints[mapPoints.length - 1][0]}
-                longitude={mapPoints[mapPoints.length - 1][1]}
+                latitude={mapPoints[mapPoints.length - 1].lat}
+                longitude={mapPoints[mapPoints.length - 1].lon}
                 type={selectedDeviceType}
                 speed={0}
                 status="online"
@@ -1104,6 +1304,13 @@ const normalizeRows = (type, data) => {
               >
                 <div className="text-xs text-slate-100">Fim</div>
               </RealisticVehicleMarker>
+              <Marker
+                position={[
+                  mapPoints[Math.floor(mapPoints.length / 2)].lat,
+                  mapPoints[Math.floor(mapPoints.length / 2)].lon,
+                ]}
+                icon={arrowIcon}
+              />
             </MapContainer>
           </div>
         </div>
