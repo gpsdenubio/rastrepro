@@ -1,69 +1,61 @@
 import React, { useEffect, useState } from "react";
 import { createUser, updateUser } from "../services/traccar";
 
+const buildEmptyForm = () => ({
+  name: "",
+  email: "",
+  phone: "",
+  phone2: "",
+  admin: false,
+  disabled: false,
+  password: "",
+  cpfCnpj: "",
+  address: "",
+  notes: "",
+  accessLevel: "user",
+  canCreateDevice: false,
+  canCreateUser: false,
+  startDate: "",
+  expiryDate: "",
+  lastAccess: "",
+  vehicleLimit: "",
+  vehicleCount: "",
+  clientLimit: "",
+  extraDeviceLimit: "",
+  theme: "light",
+  language: "pt-BR",
+  notifEmail: true,
+  notifWhatsapp: false,
+  notifApp: true,
+  profilePhoto: "",
+});
+
 export default function UserModal({ open, onClose, onSaved, user }) {
   const isEdit = Boolean(user?.id);
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
-    phone: "",
-    phone2: "",
-    admin: false,
-    disabled: false,
-    password: "",
-    cpfCnpj: "",
-    address: "",
-    notes: "",
-    accessLevel: "user",
-    permCreate: false,
-    permEdit: false,
-    permDelete: false,
-    permView: true,
-    permFinance: false,
-    permReports: true,
-    permMap: true,
-    permSettings: false,
-    permExport: false,
-    startDate: "",
-    expiryDate: "",
-    lastAccess: "",
-    vehicleLimit: "",
-    vehicleCount: "",
-    clientLimit: "",
-    extraDeviceLimit: "",
-    theme: "light",
-    language: "pt-BR",
-    notifEmail: true,
-    notifWhatsapp: false,
-    notifApp: true,
-    profilePhoto: "",
-  });
+  const [form, setForm] = useState(buildEmptyForm());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (user) {
+    if (user && open) {
+      const adminFlag = Boolean(user.admin || user.administrator);
       setForm({
+        ...buildEmptyForm(),
         name: user.name || "",
         email: user.email || "",
         phone: user.phone || "",
         phone2: user.attributes?.phone2 || "",
-        admin: Boolean(user.admin || user.administrator),
+        admin: adminFlag,
         disabled: Boolean(user.disabled),
         password: "",
         cpfCnpj: user.attributes?.cpfCnpj || "",
         address: user.attributes?.address || "",
         notes: user.attributes?.notes || "",
-        accessLevel: user.attributes?.accessLevel || "user",
-        permCreate: Boolean(user.attributes?.permissions?.create),
-        permEdit: Boolean(user.attributes?.permissions?.edit),
-        permDelete: Boolean(user.attributes?.permissions?.delete),
-        permView: user.attributes?.permissions?.view ?? true,
-        permFinance: Boolean(user.attributes?.permissions?.finance),
-        permReports: user.attributes?.permissions?.reports ?? true,
-        permMap: user.attributes?.permissions?.map ?? true,
-        permSettings: Boolean(user.attributes?.permissions?.settings),
-        permExport: Boolean(user.attributes?.permissions?.export),
+        accessLevel: adminFlag ? "admin" : "user",
+        canCreateDevice:
+          Boolean(user.attributes?.permissions?.devicesCreate ?? user.attributes?.permissions?.create ?? false),
+        canCreateUser:
+          Boolean(user.attributes?.permissions?.usersCreate ?? user.attributes?.permissions?.create ?? false),
         startDate: user.attributes?.startDate || "",
         expiryDate: user.attributes?.expiryDate || "",
         lastAccess: user.attributes?.lastAccess || "",
@@ -78,44 +70,10 @@ export default function UserModal({ open, onClose, onSaved, user }) {
         notifApp: Boolean(user.attributes?.notifications?.app ?? true),
         profilePhoto: user.attributes?.profilePhoto || "",
       });
-    } else {
-      setForm({
-        name: "",
-        email: "",
-        phone: "",
-        phone2: "",
-        admin: false,
-        disabled: false,
-        password: "",
-        cpfCnpj: "",
-        address: "",
-        notes: "",
-        accessLevel: "user",
-        permCreate: false,
-        permEdit: false,
-        permDelete: false,
-        permView: true,
-        permFinance: false,
-        permReports: true,
-        permMap: true,
-        permSettings: false,
-        permExport: false,
-        startDate: "",
-        expiryDate: "",
-        lastAccess: "",
-        vehicleLimit: "",
-        vehicleCount: "",
-        clientLimit: "",
-        extraDeviceLimit: "",
-        theme: "light",
-        language: "pt-BR",
-        notifEmail: true,
-        notifWhatsapp: false,
-        notifApp: true,
-        profilePhoto: "",
-      });
+    } else if (!user && open) {
+      setForm(buildEmptyForm());
     }
-    setError("");
+    if (open) setError("");
   }, [user, open]);
 
   const handleChange = (field, value) => {
@@ -127,7 +85,15 @@ export default function UserModal({ open, onClose, onSaved, user }) {
     setSaving(true);
     setError("");
     try {
-      const payload = { ...form };
+      const payload = {
+        ...form,
+        permissions: {
+          ...(form.permissions || {}),
+          create: Boolean(form.canCreateDevice),
+          devicesCreate: Boolean(form.canCreateDevice),
+          usersCreate: Boolean(form.canCreateUser),
+        },
+      };
       if (!payload.password) delete payload.password;
       if (isEdit) {
         await updateUser(user.id, payload);
@@ -284,45 +250,57 @@ export default function UserModal({ open, onClose, onSaved, user }) {
             </section>
 
             <section className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.45)] p-4">
-              <h3 className="text-sm font-semibold text-slate-100">Controle de acesso</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-100">Controle de acesso</h3>
+                  <p className="text-xs text-slate-400">
+                    Use apenas o papel de Administrador do Traccar para liberar tudo.
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.admin}
+                    onChange={(e) => handleChange("admin", e.target.checked)}
+                    className="h-4 w-4 accent-sky-500"
+                  />
+                  Administrador
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <label className="flex flex-col text-sm">
-                  Nível de acesso
+                  Perfil
                   <select
                     value={form.accessLevel}
                     onChange={(e) => handleChange("accessLevel", e.target.value)}
                     className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
+                    disabled={form.admin}
                   >
                     <option value="admin">Administrador</option>
                     <option value="user">Usuário</option>
-                    <option value="finance">Financeiro</option>
-                    <option value="operator">Operador</option>
-                    <option value="view">Visualização</option>
                   </select>
                 </label>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
-                {[
-                  { key: "permCreate", label: "Criar" },
-                  { key: "permEdit", label: "Editar" },
-                  { key: "permDelete", label: "Excluir" },
-                  { key: "permView", label: "Somente visualizar" },
-                  { key: "permFinance", label: "Acesso ao financeiro" },
-                  { key: "permReports", label: "Acesso a relatórios" },
-                  { key: "permMap", label: "Acesso ao mapa/rastreamento" },
-                  { key: "permSettings", label: "Acesso às configurações" },
-                  { key: "permExport", label: "Exportar dados (PDF/Excel)" },
-                ].map((p) => (
-                  <label key={p.key} className="flex items-center gap-2 text-slate-100">
-                    <input
-                      type="checkbox"
-                      checked={form[p.key]}
-                      onChange={(e) => handleChange(p.key, e.target.checked)}
-                      className="h-4 w-4 accent-sky-500"
-                    />
-                    {p.label}
-                  </label>
-                ))}
+                <label className="flex items-center gap-2 text-sm mt-2">
+                  <input
+                    type="checkbox"
+                    checked={form.canCreateDevice}
+                    onChange={(e) => handleChange("canCreateDevice", e.target.checked)}
+                    className="h-4 w-4 accent-sky-500"
+                    disabled={form.admin}
+                  />
+                  Permitir criar dispositivos
+                </label>
+                <label className="flex items-center gap-2 text-sm mt-2">
+                  <input
+                    type="checkbox"
+                    checked={form.canCreateUser}
+                    onChange={(e) => handleChange("canCreateUser", e.target.checked)}
+                    className="h-4 w-4 accent-sky-500"
+                    disabled={form.admin}
+                  />
+                  Permitir criar usuários
+                </label>
               </div>
             </section>
 

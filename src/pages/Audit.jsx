@@ -159,7 +159,8 @@ export function AuditContent({ embedded = false }) {
       const list = await getAuditLogs(params);
       const mapped = (Array.isArray(list) ? list : []).map((item, idx) => mapEntry(item, idx));
       setRows(mapped);
-    } catch (err) {
+    } catch (error) {
+      console.warn("Não foi possível carregar auditoria:", error);
       setError("Não foi possível carregar auditoria.");
     } finally {
       setLoading(false);

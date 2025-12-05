@@ -6,8 +6,6 @@ export default function DeviceBlockActions({ device, onLog, onDeviceUpdate }) {
   const [status, setStatus] = useState(null); // "blocked" | "unblocked" | null
   const [message, setMessage] = useState("");
 
-  if (!device?.id) return null;
-
   // Status inicial conforme atributo engine
   React.useEffect(() => {
     const engine = device?.attributes?.engine;
@@ -15,6 +13,8 @@ export default function DeviceBlockActions({ device, onLog, onDeviceUpdate }) {
     else if (engine === "resume") setStatus("unblocked");
     else setStatus(null);
   }, [device]);
+
+  if (!device?.id) return null;
 
   const handleAction = async (action) => {
     setMessage("");
@@ -74,21 +74,17 @@ export default function DeviceBlockActions({ device, onLog, onDeviceUpdate }) {
   return (
     <div className="flex flex-col items-end gap-2">
       <div className="flex items-center gap-2 flex-wrap justify-end">
-        <span
-          className={`px-3 py-1 rounded-full text-xs font-semibold border ${
-            status === "blocked"
-              ? "bg-red-900/60 text-red-200 border-red-700"
-              : status === "unblocked"
-                ? "bg-emerald-900/60 text-emerald-200 border-emerald-700"
-                : "bg-slate-800 text-slate-200 border-slate-700"
-          }`}
-        >
-          {status === "blocked"
-            ? "Bloqueado"
-            : status === "unblocked"
-              ? "Desbloqueado"
-              : "Aguardando"}
-        </span>
+        {(status === "blocked" || status === "unblocked") && (
+          <span
+            className={`px-3 py-1 rounded-full text-xs font-semibold border ${
+              status === "blocked"
+                ? "bg-red-900/60 text-red-200 border-red-700"
+                : "bg-emerald-900/60 text-emerald-200 border-emerald-700"
+            }`}
+          >
+            {status === "blocked" ? "Bloqueado" : "Desbloqueado"}
+          </span>
+        )}
         <button
           onClick={() => handleAction("block")}
           disabled={loading === "block"}

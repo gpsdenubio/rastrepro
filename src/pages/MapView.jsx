@@ -1,5 +1,5 @@
 // src/pages/MapView.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MapContainer, TileLayer, useMap, Circle } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
@@ -12,6 +12,7 @@ import {
 } from "../services/traccar";
 import RealisticVehicleMarker from "../components/RealisticVehicleMarker";
 import { useEventSocket } from "../hooks/useEventSocket";
+import { useAuth } from "../context/AuthContext";
 
 // corrigir ícone
 delete L.Icon.Default.prototype._getIconUrl;
@@ -24,13 +25,9 @@ L.Icon.Default.mergeOptions({
     "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
 });
 
-const formatCoords = (lat, lon) => {
-  if (lat == null || lon == null || Number.isNaN(lat) || Number.isNaN(lon)) return "-";
-  const nLat = Number(lat);
-  const nLon = Number(lon);
-  if (!Number.isFinite(nLat) || !Number.isFinite(nLon)) return "-";
-  return `${nLat.toFixed(5)}, ${nLon.toFixed(5)}`;
-};
+const isCoordLike = (addr) =>
+  typeof addr === "string" &&
+  /^-?\d+(\.\d+)?\s*[,; ]\s*-?\d+(\.\d+)?$/.test(addr.trim());
 
 function FitMapView({ positions, lastInteractionRef }) {
   const map = useMap();
@@ -56,6 +53,7 @@ function FitMapView({ positions, lastInteractionRef }) {
       if (allowRefit) {
         const bounds = L.latLngBounds(positions.map((p) => [p.latitude, p.longitude]));
         map.fitBounds(bounds, { padding: [80, 80] });
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setHasFitted(true);
       }
     }
@@ -64,8 +62,23 @@ function FitMapView({ positions, lastInteractionRef }) {
 }
 
 export default function MapView({ onSelectDevice, height }) {
+  const { can } = useAuth();
+  const canView = can("map.view");
   const lastInteractionRef = useRef(0);
   const batteryCacheRef = useRef({});
+  const addressCacheRef = useRef({});
+  const geocodeInFlightRef = useRef(new Set());
+  const ignitionDisplayRef = useRef({});
+  const batteryDisplayRef = useRef({});
+  const setCachedAddress = (key, addr) => {
+    if (!addr) return;
+    const k = key != null ? String(key) : null;
+    if (!k) return;
+    addressCacheRef.current = {
+      ...addressCacheRef.current,
+      [k]: addr,
+    };
+  };
   const [devices, setDevices] = useState([]);
   const [positions, setPositions] = useState([]);
   const [matchedPositions, setMatchedPositions] = useState([]);
@@ -84,7 +97,7 @@ export default function MapView({ onSelectDevice, height }) {
       if (stored) {
         try {
           return JSON.parse(stored);
-        } catch (err) {
+        } catch {
           return {};
         }
       }
@@ -104,14 +117,104 @@ export default function MapView({ onSelectDevice, height }) {
   const mapMatchCacheRef = useRef(new Map());
   const mergingPositionsRef = useRef(false);
 
-  const loadData = async () => {
+  const updateIgnitionCacheFromList = (list = []) => {
+    setIgnitionCache((prev) => {
+      const next = { ...prev };
+      list.forEach((item) => {
+        const id = item.deviceId ?? item.id;
+        if (id == null) return;
+        const raw =
+          item?.attributes?.ignition ??
+          item?.ignition ??
+          item?.attributes?.acc;
+        if (
+          raw === true ||
+          raw === false ||
+          raw === "true" ||
+          raw === "false" ||
+          raw === 1 ||
+          raw === 0
+        ) {
+          next[id] = raw === true || raw === "true" || raw === 1;
+        }
+      });
+      return next;
+    });
+  };
+
+  const updateBatteryCacheFromList = (list = []) => {
+    const cache = { ...batteryCacheRef.current };
+    list.forEach((item) => {
+      const id = item.deviceId ?? item.id;
+      if (id == null) return;
+      const lvl = Number(
+        item?.attributes?.batteryLevel ??
+          item?.batteryLevel
+      );
+      const volt =
+        Number(
+          item?.attributes?.battery ??
+            item?.attributes?.batteryLevelVolts ??
+            item?.batteryLevelVolts ??
+            item?.battery ??
+            item?.attributes?.power ??
+            item?.attributes?.deviceBattery
+        );
+      const hasLvl = Number.isFinite(lvl);
+      const hasVolt = Number.isFinite(volt);
+      if (hasLvl || hasVolt) {
+        const prev = cache[id] || {};
+        cache[id] = {
+          level: hasLvl ? lvl : prev.level,
+          voltage: hasVolt ? volt : prev.voltage,
+        };
+      }
+    });
+    batteryCacheRef.current = cache;
+  };
+
+  const loadData = useCallback(async () => {
+    if (!canView) return;
     const dev = await getDevices();
     const pos = await getPositions();
     setDevices(dev);
-    setPositions(pos);
-  };
+    // Semear cache de endereço e usar último valor conhecido
+    const cache = { ...addressCacheRef.current };
+    dev.forEach((d) => {
+      if (d?.address) {
+        setCachedAddress(d.id, d.address);
+        cache[String(d.id)] = d.address;
+      }
+    });
+    const isCoordLike = (addr) =>
+      typeof addr === "string" &&
+      /^-?\d+(\.\d+)?\s*[,; ]\s*-?\d+(\.\d+)?$/.test(addr.trim());
+    const posWithAddress = pos.map((p) => {
+      const incomingAddr =
+        p.address ||
+        p.attributes?.address ||
+        p.attributes?.formattedAddress ||
+        "";
+      const hasAddr = Boolean(incomingAddr) && !isCoordLike(incomingAddr);
+      const addr =
+        incomingAddr ||
+        cache[String(p.deviceId)] ||
+        cache[String(p.id)];
+      if (addr) {
+        cache[String(p.deviceId || p.id)] = addr;
+      }
+      return { ...p, address: addr || p.address, needsGeocode: !hasAddr };
+    });
+    addressCacheRef.current = cache;
+    setPositions(posWithAddress);
+    updateIgnitionCacheFromList(dev);
+    updateIgnitionCacheFromList(pos);
+    updateBatteryCacheFromList(dev);
+    updateBatteryCacheFromList(pos);
+  }, [canView]);
 
   useEffect(() => {
+    if (!canView) return;
     loadData();
 
     let interval = setInterval(loadData, 3000);
@@ -130,7 +233,7 @@ export default function MapView({ onSelectDevice, height }) {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, []);
+  }, [canView, loadData]);
 
   // Mantém header de auth atualizado (para WS)
   useEffect(() => {
@@ -142,35 +245,51 @@ export default function MapView({ onSelectDevice, height }) {
 
   // Preenche endereço caso ainda não exista (fallback)
   useEffect(() => {
+    if (!canView) return;
     const fillAddresses = async () => {
       const missing = positions.filter(
-        (p) => !p.address && p.latitude != null && p.longitude != null
+        (p) =>
+          (!p.address || p.needsGeocode || isCoordLike(p.address || "")) &&
+          p.latitude != null &&
+          p.longitude != null &&
+          !geocodeInFlightRef.current.has(p.deviceId)
       );
       if (!missing.length) return;
+      missing.forEach((p) => {
+        if (p?.deviceId != null) geocodeInFlightRef.current.add(p.deviceId);
+      });
       const updates = await Promise.all(
         missing.map(async (p) => {
           const addr = await getAddressFromTraccar(p.latitude, p.longitude);
           return { id: p.id, deviceId: p.deviceId, address: addr };
         })
       );
-      setPositions((prev) =>
-        prev.map((pos) => {
+      setPositions((prev) => {
+        const cache = { ...addressCacheRef.current };
+        const next = prev.map((pos) => {
           const found = updates.find(
             (u) => (u.id && u.id === pos.id) || u.deviceId === pos.deviceId
           );
           if (found && found.address) {
-            return { ...pos, address: found.address };
+            cache[String(pos.deviceId || pos.id)] = found.address;
+            if (pos?.deviceId != null) geocodeInFlightRef.current.delete(pos.deviceId);
+            return { ...pos, address: found.address, needsGeocode: false };
           }
           return pos;
-        })
-      );
+        });
+        addressCacheRef.current = cache;
+        return next;
+      });
+      missing.forEach((p) => {
+        if (p?.deviceId != null) geocodeInFlightRef.current.delete(p.deviceId);
+      });
     };
     fillAddresses();
-  }, [positions]);
+  }, [positions, canView]);
 
   // Verifica âncoras a cada atualização de posição
   useEffect(() => {
-    if (!positions.length) return;
+    if (!canView || !positions.length) return;
     setAnchorStates((prev) => {
       const next = { ...prev };
       Object.entries(prev).forEach(([deviceId, state]) => {
@@ -207,7 +326,7 @@ export default function MapView({ onSelectDevice, height }) {
       });
       return next;
     });
-  }, [positions]);
+  }, [positions, canView]);
 
   const haversine = (lat1, lon1, lat2, lon2) => {
     const toRad = (v) => (v * Math.PI) / 180;
@@ -227,11 +346,12 @@ export default function MapView({ onSelectDevice, height }) {
 
   // Mantém último valor de ignição conhecido por dispositivo
   useEffect(() => {
+    if (!canView) return;
     setIgnitionCache((prev) => {
       const next = { ...prev };
       positions.forEach((p) => {
         if (p?.deviceId == null) return;
-        const raw = p.attributes?.ignition;
+        const raw = p.attributes?.ignition ?? p?.ignition ?? p?.attributes?.acc;
         if (raw === true || raw === false || raw === "true" || raw === "false" || raw === 1 || raw === 0) {
           const normalized = raw === true || raw === "true" || raw === 1;
           next[p.deviceId] = normalized;
@@ -239,7 +359,7 @@ export default function MapView({ onSelectDevice, height }) {
       });
       return next;
     });
-  }, [positions]);
+  }, [positions, canView]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -355,8 +475,8 @@ export default function MapView({ onSelectDevice, height }) {
         mapMatchCacheRef.current.set(key, { lat: mlat, lon: mlon });
         return corrected;
       }
-    } catch (err) {
-      // fallback silencioso
+    } catch (error) {
+      console.warn("Map matching falhou:", error);
     }
     return pos;
   };
@@ -380,6 +500,7 @@ export default function MapView({ onSelectDevice, height }) {
     if (!incoming.length) return;
     setPositions((prev) => {
       const byDevice = new Map();
+      const cache = { ...addressCacheRef.current };
       const all = [...(prev || []), ...incoming];
       all.forEach((p) => {
         if (!p?.deviceId) return;
@@ -387,10 +508,36 @@ export default function MapView({ onSelectDevice, height }) {
         const currentTime = current?.deviceTime ? new Date(current.deviceTime).getTime() : 0;
         const newTime = p.deviceTime ? new Date(p.deviceTime).getTime() : 0;
         if (!current || newTime >= currentTime) {
-          byDevice.set(p.deviceId, { ...current, ...p });
+          const hasAddr = Boolean(
+            p.address ||
+            p.attributes?.address ||
+            p.attributes?.formattedAddress
+          ) && !isCoordLike(
+            p.address ||
+              p.attributes?.address ||
+              p.attributes?.formattedAddress ||
+              ""
+          );
+          const cachedAddr = cache[String(p.deviceId)];
+          const addr =
+            p.address ||
+            p.attributes?.address ||
+            p.attributes?.formattedAddress ||
+            cachedAddr;
+          if (addr) cache[String(p.deviceId)] = addr;
+          byDevice.set(p.deviceId, {
+            ...current,
+            ...p,
+            address: addr || p.address,
+            needsGeocode: !hasAddr,
+          });
         }
       });
-      return Array.from(byDevice.values());
+      const merged = Array.from(byDevice.values());
+      addressCacheRef.current = cache;
+      updateIgnitionCacheFromList(incoming);
+      updateBatteryCacheFromList(incoming);
+      return merged;
     });
   };
 
@@ -412,6 +559,8 @@ export default function MapView({ onSelectDevice, height }) {
           (msg.devices || []).forEach((d) => {
             byId.set(d.id, { ...(byId.get(d.id) || {}), ...d });
           });
+          updateIgnitionCacheFromList(msg.devices || []);
+          updateBatteryCacheFromList(msg.devices || []);
           return Array.from(byId.values());
         });
       }
@@ -431,91 +580,82 @@ export default function MapView({ onSelectDevice, height }) {
     );
   };
 
-  if (!currentLayer) {
-    return <div className="p-4 text-sm text-red-600">Nenhuma camada de mapa disponível.</div>;
-  }
-
   const mapHeight = height || "calc(100vh - 96px)";
 
   return (
     <div className="w-full bg-white" style={{ height: mapHeight }}>
-      <div className="relative w-full" style={{ height: mapHeight }}>
-        <MapContainer
-          center={[-22.84, -47.15]}
-          zoom={10}
-          style={{ height: "100%", width: "100%" }}
-          className="z-0"
-        >
-          <TileLayer
-            key={currentLayer.id}
-            url={currentLayer.url}
-            attribution={currentLayer.attribution}
-            subdomains={currentLayer.subdomains}
-          />
-          <FitMapView positions={positions} lastInteractionRef={lastInteractionRef} />
+      {!canView ? (
+        <div className="p-4 text-sm text-red-300">Você não tem permissão para visualizar o mapa.</div>
+      ) : !currentLayer ? (
+        <div className="p-4 text-sm text-red-600">Nenhuma camada de mapa disponível.</div>
+      ) : (
+        <>
+        <div className="relative w-full" style={{ height: mapHeight }}>
+          <MapContainer
+            center={[-22.84, -47.15]}
+            zoom={10}
+            style={{ height: "100%", width: "100%" }}
+            className="z-0"
+          >
+            <TileLayer
+              key={currentLayer.id}
+              url={currentLayer.url}
+              attribution={currentLayer.attribution}
+              subdomains={currentLayer.subdomains}
+            />
+            <FitMapView positions={positions} lastInteractionRef={lastInteractionRef} />
 
-          {Object.entries(anchorStates)
-            .filter(([, state]) => state?.active && state.center)
-            .map(([id, state]) => (
-              <Circle
-                key={`anchor-${id}`}
-                center={state.center}
-                radius={state.radius}
-                pathOptions={{
-                  color: state.mode === "block" ? "#e74c3c" : "#3498db",
-                  fillColor: state.mode === "block" ? "#e74c3c" : "#3498db",
-                  fillOpacity: 0.12,
-                  weight: 2,
-                }}
-              />
-            ))}
+            {Object.entries(anchorStates)
+              .filter(([, state]) => state?.active && state.center)
+              .map(([id, state]) => (
+                <Circle
+                  key={`anchor-${id}`}
+                  center={state.center}
+                  radius={state.radius}
+                  pathOptions={{
+                    color: state.mode === "block" ? "#e74c3c" : "#3498db",
+                    fillColor: state.mode === "block" ? "#e74c3c" : "#3498db",
+                    fillOpacity: 0.12,
+                    weight: 2,
+                  }}
+                />
+              ))}
 
-          {devices.map((d) => {
-            const p = getPos(d.id);
-            if (!p) return null;
-            const speedVal = Number(p.speed || 0);
-            const engine = d.attributes?.engine;
-            const isOnline = d.status === "online";
-            const isBlocked = engine === "stop";
-            const rawIgn = p.attributes?.ignition;
-            const normalizedIgn =
-              rawIgn === true || rawIgn === "true" || rawIgn === 1
-                ? true
-                : rawIgn === false || rawIgn === "false" || rawIgn === 0
-                ? false
-                : null;
-            const ignition = normalizedIgn !== null ? normalizedIgn : ignitionCache[d.id];
-            const address =
-              p.address ||
-              p.attributes?.address ||
-              p.attributes?.formattedAddress ||
-              (p.latitude && p.longitude ? `${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}` : "-");
-            const trackerRaw =
-              p.attributes?.batteryVoltage ??
-              p.attributes?.battery ??
-              p.attributes?.batteryLevel ??
-              d.attributes?.batteryVoltage ??
-              d.attributes?.battery ??
-              d.attributes?.batteryLevel ??
-              null;
-            const trackerLabel =
-              trackerRaw != null
-                ? typeof trackerRaw === "number" && trackerRaw > 0 && trackerRaw <= 100
-                  ? `Bateria do Rastreador: ${trackerRaw.toFixed(0)}%`
-                  : `Bateria do Rastreador: ${Number(trackerRaw).toFixed(1)} V`
-                : null;
-            const vehicleRaw =
-              p.attributes?.power ??
-              p.attributes?.deviceBattery ??
-              d.attributes?.power ??
-              d.attributes?.deviceBattery ??
-              null;
-            const vehicleLabel =
-              vehicleRaw != null ? `Bateria do Veículo: ${Number(vehicleRaw).toFixed(1)} V` : null;
+            {devices.map((d) => {
+              const p = getPos(d.id);
+              if (!p) return null;
+              const speedVal = Number(p.speed || 0);
+              const engine = d.attributes?.engine;
+              const isOnline = d.status === "online";
+              const isBlocked = engine === "stop";
+              const rawIgn = p.attributes?.ignition ?? d.attributes?.ignition ?? p?.attributes?.acc;
+              const normalizedIgn =
+                rawIgn === true || rawIgn === "true" || rawIgn === 1
+                  ? true
+                  : rawIgn === false || rawIgn === "false" || rawIgn === 0
+                  ? false
+                  : null;
+              const lastIgn = ignitionCache[d.id];
+              const ignition = normalizedIgn !== null ? normalizedIgn : lastIgn;
+              if (ignition !== undefined && ignition !== null) {
+                ignitionDisplayRef.current[d.id] = ignition;
+              }
             const anchor = anchorStates[d.id];
             const heading = p.course ?? p.attributes?.course ?? p.attributes?.bearing ?? 0;
             const type = (d.category || "").toLowerCase();
             const markerStatus = isOnline ? (speedVal > 1 ? "moving" : "online") : "offline";
+            const addressDisplay =
+              addressCacheRef.current[d.id] ||
+              p.address ||
+              p.attributes?.address ||
+              p.attributes?.formattedAddress ||
+              (p.latitude && p.longitude ? `${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}` : "-");
+            const driverLabel =
+              d.driverName ||
+              d.driverUniqueId ||
+              p.attributes?.driverUniqueId ||
+              p.attributes?.driverName ||
+              "-";
 
             const handleBlock = async () => {
               if (actionLoading) return;
@@ -558,12 +698,20 @@ export default function MapView({ onSelectDevice, height }) {
               p?.battery
             );
             const previous = cache[d.id] || {};
-            const batteryLevel = Number.isFinite(rawLevel) ? rawLevel : previous.level;
-            const batteryVoltage = Number.isFinite(rawVoltage) ? rawVoltage : previous.voltage;
-            if (Number.isFinite(rawLevel) || Number.isFinite(rawVoltage)) {
+            const hasLevel = Number.isFinite(rawLevel);
+            const hasVolt = Number.isFinite(rawVoltage);
+            const batteryLevel = hasLevel ? rawLevel : previous.level;
+            const batteryVoltage = hasVolt ? rawVoltage : previous.voltage;
+            if (hasLevel || hasVolt) {
               cache[d.id] = {
-                level: Number.isFinite(rawLevel) ? rawLevel : previous.level,
-                voltage: Number.isFinite(rawVoltage) ? rawVoltage : previous.voltage,
+                level: batteryLevel,
+                voltage: batteryVoltage,
+              };
+            }
+            if (batteryLevel !== undefined || batteryVoltage !== undefined) {
+              batteryDisplayRef.current[d.id] = {
+                level: batteryLevel,
+                voltage: batteryVoltage,
               };
             }
 
@@ -613,8 +761,16 @@ export default function MapView({ onSelectDevice, height }) {
                           : "text-red-300"
                       }`}
                     >
-                      {Number.isFinite(batteryLevel) ? `${Math.round(batteryLevel)}%` : "--"}
-                      {Number.isFinite(batteryVoltage) ? ` • ${batteryVoltage.toFixed(1)}V` : ""}
+                      {Number.isFinite(batteryLevel) || Number.isFinite(batteryDisplayRef.current[d.id]?.level)
+                        ? `${Math.round(Number.isFinite(batteryLevel) ? batteryLevel : batteryDisplayRef.current[d.id].level)}%`
+                        : "--"}
+                      {Number.isFinite(batteryVoltage) || Number.isFinite(batteryDisplayRef.current[d.id]?.voltage)
+                        ? ` • ${(
+                            Number.isFinite(batteryVoltage)
+                              ? batteryVoltage
+                              : batteryDisplayRef.current[d.id].voltage
+                          ).toFixed(1)}V`
+                        : ""}
                     </span>
                     <span
                       title="Velocidade"
@@ -626,7 +782,11 @@ export default function MapView({ onSelectDevice, height }) {
                 </div>
                 <div className="text-[11px] text-slate-300 flex items-center gap-1">
                   <span>📍</span>
-                  <span className="truncate">{formatCoords(p.latitude, p.longitude)}</span>
+                  <span className="truncate">{addressDisplay}</span>
+                </div>
+                <div className="text-[11px] text-slate-300 flex items-center gap-1">
+                  <span>👤</span>
+                  <span className="truncate">{driverLabel || "-"}</span>
                 </div>
                 <div className="text-[11px] text-slate-400 flex items-center gap-1">
                   <span>🕒</span>
@@ -642,9 +802,9 @@ export default function MapView({ onSelectDevice, height }) {
                         : "Ignição desconhecida"
                     }
                     className={`h-9 w-9 text-lg rounded-lg border flex items-center justify-center ${
-                      ignition === true
+                      (ignition ?? ignitionDisplayRef.current[d.id]) === true
                         ? "text-emerald-300 border-emerald-500/60 bg-emerald-900/30"
-                        : ignition === false
+                        : (ignition ?? ignitionDisplayRef.current[d.id]) === false
                         ? "text-red-300 border-red-500/60 bg-red-900/30"
                         : "text-slate-300 border-slate-600 bg-slate-800/60"
                     }`}
@@ -835,6 +995,8 @@ export default function MapView({ onSelectDevice, height }) {
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

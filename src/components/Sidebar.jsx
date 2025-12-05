@@ -1,25 +1,27 @@
 // src/components/Sidebar.jsx
 import React from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { Home, MapPin, List, Bell, LogOut, Users, FileText, Settings } from "lucide-react";
+import { Home, MapPin, List, Bell, LogOut, Users, FileText, Settings, User, BellRing } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
 export default function Sidebar({ open }) {
-  const { logout } = useAuth();
+  const { can } = useAuth();
   const location = useLocation();
 
   const baseItem =
     "w-full flex items-center gap-3 p-2.5 rounded-lg transition mt-1 text-slate-200";
 
   const navItems = [
-    { to: "/dashboard", label: "Dashboard", icon: <Home size={18} /> },
-    { to: "/users", label: "Usuários", icon: <Users size={18} /> },
-    { to: "/devices", label: "Dispositivos", icon: <List size={18} /> },
-    { to: "/reports", label: "Relatórios", icon: <FileText size={18} /> },
-    { to: "/alerts", label: "Eventos", icon: <Bell size={18} /> },
-    { to: "/map", label: "Mapa", icon: <MapPin size={18} /> },
-    { to: "/settings", label: "Configurações", icon: <Settings size={18} /> },
-  ];
+    { to: "/dashboard", label: "Dashboard", icon: <Home size={18} />, perm: "dashboard.view" },
+    { to: "/users", label: "Usuários", icon: <Users size={18} />, perm: "users.manage" },
+    { to: "/drivers", label: "Motoristas", icon: <User size={18} />, perm: "drivers.view" },
+    { to: "/notifications", label: "Notificações", icon: <BellRing size={18} />, perm: "notifications.view" },
+    { to: "/devices", label: "Dispositivos", icon: <List size={18} />, perm: "devices.view" },
+    { to: "/reports", label: "Relatórios", icon: <FileText size={18} />, perm: "reports.view" },
+    { to: "/alerts", label: "Eventos", icon: <Bell size={18} />, perm: "alerts.view" },
+    { to: "/map", label: "Mapa", icon: <MapPin size={18} />, perm: "map.view" },
+    { to: "/settings", label: "Configurações", icon: <Settings size={18} />, perm: "settings.view" },
+  ].filter((item) => can(item.perm));
 
   return (
     <aside

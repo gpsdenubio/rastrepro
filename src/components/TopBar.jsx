@@ -67,7 +67,7 @@ export default function TopBar({ onToggleSidebar, title = "RastrePro" }) {
       setMsgIndex((i) => (i + 1) % messages.length);
     }, (ms || durationMs) + PAUSE_MS);
     return () => clearTimeout(timer);
-  }, [msgIndex, messages.length]);
+  }, [msgIndex, messages.length, durationMs]);
 
   const toggleMute = () => {
     const next = !muted;

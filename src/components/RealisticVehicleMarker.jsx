@@ -222,7 +222,7 @@ export default function RealisticVehicleMarker({
       iconSize: [size, size],
       iconAnchor: [size / 2, size / 2],
     });
-  }, [heading, speed, type, zoom, status, isBlocked]);
+  }, [heading, speed, type, zoom, status, isBlocked, device?.attributes?.tipo, device?.name]);
 
   return (
     <Marker

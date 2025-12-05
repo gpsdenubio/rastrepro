@@ -5,6 +5,7 @@ import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import { getDevices, runReport, getAddressFromTraccar } from "../services/traccar";
 import RealisticVehicleMarker from "../components/RealisticVehicleMarker";
+import { useAuth } from "../context/AuthContext";
 
 // Corrige assets padrão do Leaflet (necessário em bundlers)
 delete L.Icon.Default.prototype._getIconUrl;
@@ -68,16 +69,6 @@ const getEventTime = (item) => {
     item?.position?.fixTime ||
     item?.position?.serverTime;
   return formatRawTime(candidate);
-};
-
-const formatDuration = (value) => {
-  if (value == null) return "-";
-  const ms = value > 1e6 ? value : value * 1000;
-  const totalSeconds = Math.floor(ms / 1000);
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = totalSeconds % 60;
-  return `${h}h ${m}m ${s}s`;
 };
 
 const formatDistance = (value) => {
@@ -206,13 +197,6 @@ const resolveEngineHoursRange = (item) => {
   return { start, end };
 };
 
-const parseNumberText = (txt) => {
-  if (!txt) return null;
-  const cleaned = String(txt).replace(/[^\d.,-]/g, "").replace(",", ".");
-  const num = Number(cleaned);
-  return Number.isNaN(num) ? null : num;
-};
-
 const computeTripMetrics = (trip) => {
   const points = extractTripPoints(trip);
   const seq = points.length ? points : [];
@@ -301,31 +285,6 @@ const computeTripMetrics = (trip) => {
   };
 };
 
-// Limpa paradas: velocidade zero, mínima 5 min, ignora intervalos muito longos (>2h)
-const cleanStopsReport = (list = []) => {
-  const MIN_MS = 5 * 60 * 1000;
-  const MAX_MS = 2 * 60 * 60 * 1000;
-  const sorted = [...list].sort((a, b) => {
-    const ta = new Date(a.startTime || a.deviceTime || a.time).getTime();
-    const tb = new Date(b.startTime || b.deviceTime || b.time).getTime();
-    return ta - tb;
-  });
-  return sorted
-    .map((item) => {
-      const start = new Date(item.startTime || item.deviceTime || item.time);
-      const end = new Date(item.endTime || item.serverTime || item.deviceTime || item.time);
-      const durationMs = end - start;
-      return { ...item, durationMs };
-    })
-    .filter((item) => {
-      const speedZero = (Number(item.speed) || 0) === 0 && (Number(item.averageSpeed) || 0) === 0;
-      if (!speedZero) return false;
-      if (item.durationMs < MIN_MS) return false;
-      if (item.durationMs > MAX_MS) return false; // ignora buracos de sinal muito longos
-      return true;
-    });
-};
-
 // Limpa viagens (trips): ignora buracos >2h, dupes sem deslocamento, duração real
 const cleanTripsReport = (list = []) => {
   const MAX_GAP_MS = 2 * 60 * 60 * 1000;
@@ -368,55 +327,6 @@ const cleanRoutePositions = (list = []) => {
     cleaned.push(item);
   });
   return cleaned;
-};
-
-// Agrupa paradas longas consecutivas no mesmo ponto
-const groupStops = (list = []) => {
-  const grouped = [];
-  let buffer = [];
-
-  const flushBuffer = () => {
-    if (buffer.length === 0) return;
-    if (buffer.length === 1 || (Number(buffer[0].speed) || 0) !== 0) {
-      grouped.push(buffer[0]);
-      buffer = [];
-      return;
-    }
-    const first = buffer[0];
-    const last = buffer[buffer.length - 1];
-    grouped.push({
-      ...first,
-      startTime: first.serverTime || first.deviceTime || first.time,
-      endTime: last.serverTime || last.deviceTime || last.time,
-      durationMs:
-        new Date(last.serverTime || last.deviceTime || last.time).getTime() -
-        new Date(first.serverTime || first.deviceTime || first.time).getTime(),
-      speed: 0,
-      event: "Parado",
-      groupedStop: true,
-    });
-    buffer = [];
-  };
-
-  list.forEach((item) => {
-    const speedZero = (Number(item.speed) || 0) === 0;
-    if (speedZero) {
-      if (
-        buffer.length === 0 ||
-        (buffer[0].latitude === item.latitude && buffer[0].longitude === item.longitude)
-      ) {
-        buffer.push(item);
-        return;
-      }
-    }
-    flushBuffer();
-    buffer.push(item);
-    if (!speedZero) {
-      flushBuffer();
-    }
-  });
-  flushBuffer();
-  return grouped;
 };
 
 const formatCoords = (lat, lon) => {
@@ -496,6 +406,8 @@ const smoothPath = (points = [], segments = 8) => {
 };
 
 export default function Reports() {
+  const { can } = useAuth();
+  const canView = can("reports.view");
   const [devices, setDevices] = useState([]);
   const [selectedDevice, setSelectedDevice] = useState("");
   const [activeTab, setActiveTab] = useState("route");
@@ -518,16 +430,18 @@ export default function Reports() {
   const [generatedTypes, setGeneratedTypes] = useState({});
 
   useEffect(() => {
+    if (!canView) return;
     const loadDevices = async () => {
       try {
         const list = await getDevices();
         setDevices(list || []);
-      } catch (err) {
+      } catch (error) {
+        console.warn("Não foi possível carregar dispositivos:", error);
         setError("Não foi possível carregar dispositivos");
       }
     };
     loadDevices();
-  }, []);
+  }, [canView]);
 
   const toIso = (val) => new Date(val).toISOString();
   const setRange = (range) => {
@@ -683,8 +597,6 @@ const normalizeRows = (type, data) => {
             startMs != null && endMs != null && endMs >= startMs
               ? endMs - startMs
               : normalizeDurationVal(item.durationMs ?? item.duration);
-          const startOdoVal = Number(item.startOdometer);
-          const endOdoVal = Number(item.endOdometer);
           const rawAddress = item.address || formatCoords(item.latitude, item.longitude);
           const displayAddress = rawAddress || "-";
 
@@ -703,6 +615,7 @@ const normalizeRows = (type, data) => {
               item.spentFuel != null && !Number.isNaN(Number(item.spentFuel))
                 ? `${Number(item.spentFuel).toFixed(2)} L`
                 : "-",
+            driver: item.driverUniqueId || item.driverName || item.driver || "-",
             deviceName: item.deviceName || "Dispositivo",
           };
         });
@@ -846,8 +759,8 @@ const normalizeRows = (type, data) => {
       }
 
       setGeneratedTypes((prev) => ({ ...prev, [type]: true }));
-    } catch (err) {
-      const msg = err?.message || "Erro ao gerar relatório";
+    } catch (error) {
+      const msg = error?.message || "Erro ao gerar relatório";
       setError(msg);
     } finally {
       setLoading(false);
@@ -855,10 +768,12 @@ const normalizeRows = (type, data) => {
   };
 
   useEffect(() => {
+    if (!canView) return;
     if (selectedDevice) {
       handleGenerate(activeTab);
     }
-  }, [activeTab, selectedDevice, fromDate, toDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, selectedDevice, fromDate, toDate, canView]);
 
 
 
@@ -913,18 +828,6 @@ const normalizeRows = (type, data) => {
   );
 
   const currentLayer = baseLayers.find((l) => l.id === baseMap) || baseLayers[0];
-  const vehicleIcon = useMemo(
-    () =>
-      L.icon({
-        iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-        shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-        iconSize: [25, 41],
-        iconAnchor: [12, 41],
-        popupAnchor: [1, -34],
-        shadowSize: [41, 41],
-      }),
-    []
-  );
   const arrowIcon = useMemo(
     () =>
       L.divIcon({
@@ -946,643 +849,563 @@ const normalizeRows = (type, data) => {
   const currentRows = dataByType[activeTab]?.rows || [];
   const mapPoints = dataByType.route?.mapPoints || [];
   const currentReportLabel = reportCards.find((t) => t.value === activeTab)?.label || "Relatório";
-  const isStops = activeTab === "stops";
-  const isTrips = activeTab === "trips";
   const isResumo = activeTab === "resumo";
-
-  const routeStats = useMemo(() => {
-    const summaryRow = dataByType?.resumo?.rows?.[0];
-    if (summaryRow) {
-      const dist = parseNumberText(summaryRow.distance);
-      const avg = parseNumberText(summaryRow.avgSpeed);
-      const max = parseNumberText(summaryRow.maxSpeed);
-      return {
-        totalDistanceKm: dist != null ? dist.toFixed(2) : "-",
-        totalTime: summaryRow.engineHours || "-",
-        maxSpeed: max != null ? `${max.toFixed(1)} km/h` : "-",
-        avgSpeed: avg != null ? `${avg.toFixed(1)} km/h` : "-",
-        stopped: "-",
-      };
-    }
-    const routeRaw = dataByType?.route?.raw || [];
-    if (!routeRaw.length) return null;
-
-    const sorted = [...routeRaw].sort((a, b) => {
-      const ta = new Date(a.serverTime || a.deviceTime || a.fixTime || a.time).getTime();
-      const tb = new Date(b.serverTime || b.deviceTime || b.fixTime || b.time).getTime();
-      return ta - tb;
-    });
-
-    const getDistVal = (item) => {
-      const val = item?.attributes?.distance ?? item?.distance ?? item?.attributes?.totalDistance;
-      const num = Number(val);
-      return Number.isNaN(num) ? null : num;
-    };
-
-    let totalDistMeters = 0;
-    let maxSpeed = 0;
-    let stoppedMs = 0;
-
-    for (let i = 0; i < sorted.length; i++) {
-      const curr = sorted[i];
-      const next = sorted[i + 1];
-      const distVal = getDistVal(curr);
-      if (distVal != null) {
-        totalDistMeters += distVal;
-      } else if (
-        curr?.latitude != null && curr?.longitude != null &&
-        next?.latitude != null && next?.longitude != null
-      ) {
-        totalDistMeters += haversineMeters(curr.latitude, curr.longitude, next.latitude, next.longitude) || 0;
-      }
-
-      const speedVal = Number(curr?.speed);
-      if (!Number.isNaN(speedVal)) {
-        maxSpeed = Math.max(maxSpeed, speedVal);
-      }
-
-      if (speedVal === 0 && next) {
-        const t1 = new Date(curr.serverTime || curr.deviceTime || curr.fixTime || curr.time).getTime();
-        const t2 = new Date(next.serverTime || next.deviceTime || next.fixTime || next.time).getTime();
-        if (!Number.isNaN(t1) && !Number.isNaN(t2) && t2 > t1) {
-          stoppedMs += (t2 - t1);
-        }
-      }
-    }
-
-    const firstTime = new Date(sorted[0].serverTime || sorted[0].deviceTime || sorted[0].fixTime || sorted[0].time).getTime();
-    const lastTime = new Date(sorted[sorted.length - 1].serverTime || sorted[sorted.length - 1].deviceTime || sorted[sorted.length - 1].fixTime || sorted[sorted.length - 1].time).getTime();
-    const totalTimeMs = (!Number.isNaN(firstTime) && !Number.isNaN(lastTime) && lastTime > firstTime) ? (lastTime - firstTime) : 0;
-
-    const totalDistKm = totalDistMeters / 1000;
-    const totalTimeHours = totalTimeMs / (1000 * 60 * 60);
-    const avgSpeed = totalTimeHours > 0 ? (totalDistKm / totalTimeHours) : 0;
-
-    const formatHm = (ms) => {
-      const totalMinutes = Math.floor(ms / 60000);
-      const h = Math.floor(totalMinutes / 60);
-      const m = totalMinutes % 60;
-      if (h <= 0) return `${m} min`;
-      return `${h}h ${m}min`;
-    };
-
-    return {
-      totalDistanceKm: totalDistKm.toFixed(1),
-      totalTime: formatHm(totalTimeMs),
-      maxSpeed: `${Math.round(maxSpeed)} km/h`,
-      avgSpeed: `${avgSpeed.toFixed(1)} km/h`,
-      stopped: formatHm(stoppedMs),
-    };
-  }, [dataByType]);
+  const isTrips = activeTab === "trips";
 
   return (
     <div className="p-4 md:p-6 space-y-4 bg-slate-950 text-slate-100">
-      <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl p-4 border border-slate-800 space-y-4">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-100">Relatórios</h1>
-            <p className="text-sm text-slate-400">Selecione o tipo, veículo e período para gerar.</p>
-          </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => handleGenerate(activeTab)}
-            disabled={loading}
-            className="bg-sky-500 hover:bg-sky-400 disabled:opacity-60 text-slate-900 px-4 py-2 h-[46px] rounded-[10px] shadow-[0_0_16px_rgba(14,165,233,0.45)] transition font-semibold"
-          >
-            {loading ? "Gerando..." : "Gerar relatório"}
-          </button>
-        </div>
-      </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <label className="flex flex-col text-sm">
-            Veículo
-            <select
-              value={selectedDevice}
-              onChange={(e) => setSelectedDevice(e.target.value)}
-              className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
-              required
-            >
-              <option value="">Selecione</option>
-              {devices.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name || d.uniqueId || `ID ${d.id}`}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex flex-col text-sm">
-            Data inicial
-            <input
-              type="datetime-local"
-              value={fromDate}
-              onChange={(e) => setFromDate(e.target.value)}
-              className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
-              required
-            />
-          </label>
-          <label className="flex flex-col text-sm">
-            Data final
-            <input
-              type="datetime-local"
-              value={toDate}
-              onChange={(e) => setToDate(e.target.value)}
-              className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
-              required
-            />
-          </label>
-        </div>
-
-        <div className="flex flex-wrap gap-2 text-xs text-slate-400">
-          <span className="font-semibold">Intervalo rápido:</span>
-          <button
-            onClick={() => setRange("today")}
-            className="px-3 py-1 rounded-[10px] border border-slate-700 bg-slate-800 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)]"
-          >
-            Hoje
-          </button>
-          <button
-            onClick={() => setRange("yesterday")}
-            className="px-3 py-1 rounded-[10px] border border-slate-700 bg-slate-800 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)]"
-          >
-            Ontem
-          </button>
-          <button
-            onClick={() => setRange("24h")}
-            className="px-3 py-1 rounded-[10px] border border-slate-700 bg-slate-800 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)]"
-          >
-            Últimas 24h
-          </button>
-          <button
-            onClick={() => setRange("3d")}
-            className="px-3 py-1 rounded-[10px] border border-slate-700 bg-slate-800 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)]"
-          >
-            Últimos 3 dias
-          </button>
-          <button
-            onClick={() => setRange("4d")}
-            className="px-3 py-1 rounded-[10px] border border-slate-700 bg-slate-800 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)]"
-          >
-            Últimos 4 dias
-          </button>
-          <button
-            onClick={() => setRange("7d")}
-            className="px-3 py-1 rounded-[10px] border border-slate-700 bg-slate-800 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)]"
-          >
-            Últimos 7 dias
-          </button>
-        </div>
-
-        {error && <div className="text-red-400 text-sm">{error}</div>}
-      </div>
-
-      <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl p-3 border border-slate-800">
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-          {reportCards.map((tab) => (
-            <button
-              key={tab.value}
-              onClick={() => setActiveTab(tab.value)}
-              className={`text-left px-4 py-3 rounded-2xl border transition shadow-sm ${
-                activeTab === tab.value
-                  ? "border-sky-500 bg-slate-800 text-sky-200 shadow-[0_0_16px_rgba(14,165,233,0.35)]"
-                  : "bg-slate-900 text-slate-200 border-slate-800 hover:border-sky-500/60"
-              }`}
-            >
-              <div className="text-sm font-semibold">{tab.label}</div>
-              <div className="text-[12px] text-slate-400">{tab.desc}</div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {activeTab === "route" && mapPoints.length > 0 && (
-        <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl p-4 border border-slate-800 space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-slate-100">Mapa - {selectedDeviceName}</h2>
-            <div className="flex items-center gap-2 text-xs text-slate-400">
-              <span>Base:</span>
-              <select
-                value={baseMap}
-                onChange={(e) => setBaseMap(e.target.value)}
-                className="border border-slate-700 bg-slate-800 text-slate-100 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/60"
-              >
-                {baseLayers.map((layer) => (
-                  <option key={layer.id} value={layer.id}>
-                    {layer.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="h-96 rounded-lg overflow-hidden border border-slate-800">
-            <MapContainer
-              center={[mapPoints[0].lat, mapPoints[0].lon]}
-              zoom={13}
-              style={{ height: "100%", width: "100%" }}
-            >
-              <TileLayer
-                key={currentLayer.id}
-                url={currentLayer.url}
-                attribution={currentLayer.attribution}
-                subdomains={currentLayer.subdomains}
-              />
-              <Polyline
-                positions={mapPoints.map((p) => [p.lat, p.lon])}
-                color="#38bdf8"
-                weight={3}
-                opacity={0.9}
-                lineCap="round"
-              />
-              {mapPoints.map((p, idx) => (
-                <CircleMarker
-                  key={`pt-${idx}`}
-                  center={[p.lat, p.lon]}
-                  radius={4}
-                  weight={0}
-                  fillColor="#38bdf8"
-                  fillOpacity={0.4}
+      {!canView ? (
+        <>
+          <h1 className="text-2xl font-bold">Relatórios</h1>
+          <p className="text-sm text-red-300 mt-2">Você não tem permissão para acessar relatórios.</p>
+        </>
+      ) : (
+        <>
+          <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl p-4 border border-slate-800 space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <div>
+                <h1 className="text-2xl font-bold text-slate-100">Relatórios</h1>
+                <p className="text-sm text-slate-400">Selecione o tipo, veículo e período para gerar.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleGenerate(activeTab)}
+                  disabled={loading}
+                  className="bg-sky-500 hover:bg-sky-400 disabled:opacity-60 text-slate-900 px-4 py-2 h-[46px] rounded-[10px] shadow-[0_0_16px_rgba(14,165,233,0.45)] transition font-semibold"
                 >
-                  <Popup closeButton={false} className="!bg-transparent !border-none !shadow-none !p-0">
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        alignItems: "center",
-                        gap: "6px",
-                        padding: "2px",
-                      }}
+                  {loading ? "Gerando..." : "Gerar relatório"}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <label className="flex flex-col text-sm">
+                Veículo
+                <select
+                  value={selectedDevice}
+                  onChange={(e) => setSelectedDevice(e.target.value)}
+                  className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
+                  required
+                >
+                  <option value="">Selecione</option>
+                  {devices.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name || d.uniqueId || `ID ${d.id}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col text-sm">
+                Data inicial
+                <input
+                  type="datetime-local"
+                  value={fromDate}
+                  onChange={(e) => setFromDate(e.target.value)}
+                  className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
+                  required
+                />
+              </label>
+              <label className="flex flex-col text-sm">
+                Data final
+                <input
+                  type="datetime-local"
+                  value={toDate}
+                  onChange={(e) => setToDate(e.target.value)}
+                  className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
+                  required
+                />
+              </label>
+            </div>
+
+            <div className="flex flex-wrap gap-2 text-xs text-slate-400">
+              <span className="font-semibold">Intervalo rápido:</span>
+              <button
+                onClick={() => setRange("today")}
+                className="px-3 py-1 rounded-[10px] border border-slate-700 bg-slate-800 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)]"
+              >
+                Hoje
+              </button>
+              <button
+                onClick={() => setRange("yesterday")}
+                className="px-3 py-1 rounded-[10px] border border-slate-700 bg-slate-800 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)]"
+              >
+                Ontem
+              </button>
+              <button
+                onClick={() => setRange("24h")}
+                className="px-3 py-1 rounded-[10px] border border-slate-700 bg-slate-800 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)]"
+              >
+                Últimas 24h
+              </button>
+              <button
+                onClick={() => setRange("3d")}
+                className="px-3 py-1 rounded-[10px] border border-slate-700 bg-slate-800 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)]"
+              >
+                Últimos 3 dias
+              </button>
+              <button
+                onClick={() => setRange("4d")}
+                className="px-3 py-1 rounded-[10px] border border-slate-700 bg-slate-800 text-slate-100 hover-border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)]"
+              >
+                Últimos 4 dias
+              </button>
+              <button
+                onClick={() => setRange("7d")}
+                className="px-3 py-1 rounded-[10px] border border-slate-700 bg-slate-800 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_12px_rgba(14,165,233,0.35)]"
+              >
+                Últimos 7 dias
+              </button>
+            </div>
+
+            {error && <div className="text-red-400 text-sm">{error}</div>}
+          </div>
+
+          <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl p-3 border border-slate-800">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+              {reportCards.map((tab) => (
+                <button
+                  key={tab.value}
+                  onClick={() => setActiveTab(tab.value)}
+                  className={`text-left px-4 py-3 rounded-2xl border transition shadow-sm ${
+                    activeTab === tab.value
+                      ? "border-sky-500 bg-slate-800 text-sky-200 shadow-[0_0_16px_rgba(14,165,233,0.35)]"
+                      : "bg-slate-900 text-slate-200 border-slate-800 hover:border-sky-500/60"
+                  }`}
+                >
+                  <div className="text-sm font-semibold">{tab.label}</div>
+                  <div className="text-[12px] text-slate-400">{tab.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {activeTab === "route" && mapPoints.length > 0 && (
+            <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl p-4 border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-slate-100">Mapa - {selectedDeviceName}</h2>
+                <div className="flex items-center gap-2 text-xs text-slate-400">
+                  <span>Base:</span>
+                  <select
+                    value={baseMap}
+                    onChange={(e) => setBaseMap(e.target.value)}
+                    className="border border-slate-700 bg-slate-800 text-slate-100 rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/60"
+                  >
+                    {baseLayers.map((layer) => (
+                      <option key={layer.id} value={layer.id}>
+                        {layer.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="h-96 rounded-lg overflow-hidden border border-slate-800">
+                <MapContainer
+                  center={[mapPoints[0].lat, mapPoints[0].lon]}
+                  zoom={13}
+                  style={{ height: "100%", width: "100%" }}
+                >
+                  <TileLayer
+                    key={currentLayer.id}
+                    url={currentLayer.url}
+                    attribution={currentLayer.attribution}
+                    subdomains={currentLayer.subdomains}
+                  />
+                  <Polyline
+                    positions={mapPoints.map((p) => [p.lat, p.lon])}
+                    color="#38bdf8"
+                    weight={3}
+                    opacity={0.9}
+                    lineCap="round"
+                  />
+                  {mapPoints.map((p, idx) => (
+                    <CircleMarker
+                      key={`pt-${idx}`}
+                      center={[p.lat, p.lon]}
+                      radius={4}
+                      weight={0}
+                      fillColor="#38bdf8"
+                      fillOpacity={0.4}
                     >
-                      {Number.isFinite(Number(p.speed)) && Number(p.speed) > 0 ? (
+                      <Popup closeButton={false} className="!bg-transparent !border-none !shadow-none !p-0">
                         <div
                           style={{
-                            minWidth: "30px",
-                            height: "30px",
-                            borderRadius: "10px",
-                            background: "linear-gradient(145deg, rgba(11,17,32,0.95), rgba(15,23,42,0.9))",
-                            color: "#e2e8f0",
                             display: "flex",
+                            flexDirection: "column",
                             alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: "12px",
-                            fontWeight: 800,
-                            border: "1px solid rgba(56,189,248,0.48)",
-                            boxShadow: "0 6px 16px rgba(0,0,0,0.3), 0 0 0 1px rgba(56,189,248,0.08)",
-                            padding: "0 8px",
-                            lineHeight: 1.1,
-                            backdropFilter: "blur(6px)",
+                            gap: "6px",
+                            padding: "2px",
                           }}
                         >
-                          <div style={{ textAlign: "center" }}>
-                            <div style={{ fontFamily: "inherit" }}>{Math.round(Number(p.speed))}</div>
-                            <div style={{ fontSize: "9px", fontWeight: 700, color: "#bae6fd", fontFamily: "inherit" }}>
-                              km/h
+                          {Number.isFinite(Number(p.speed)) && Number(p.speed) > 0 ? (
+                            <div
+                              style={{
+                                minWidth: "30px",
+                                height: "30px",
+                                borderRadius: "10px",
+                                background: "linear-gradient(145deg, rgba(11,17,32,0.95), rgba(15,23,42,0.9))",
+                                color: "#e2e8f0",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontSize: "12px",
+                                fontWeight: 800,
+                                border: "1px solid rgba(56,189,248,0.48)",
+                                boxShadow: "0 6px 16px rgba(0,0,0,0.3), 0 0 0 1px rgba(56,189,248,0.08)",
+                                padding: "0 8px",
+                                lineHeight: 1.1,
+                                backdropFilter: "blur(6px)",
+                              }}
+                            >
+                              <div style={{ textAlign: "center" }}>
+                                <div style={{ fontFamily: "inherit" }}>{Math.round(Number(p.speed))}</div>
+                                <div style={{ fontSize: "9px", fontWeight: 700, color: "#bae6fd", fontFamily: "inherit" }}>
+                                  km/h
+                                </div>
+                              </div>
                             </div>
-                          </div>
+                          ) : (
+                            <div
+                              style={{
+                                minWidth: "26px",
+                                height: "26px",
+                                borderRadius: "9px",
+                                background: "rgba(15,23,42,0.85)",
+                                color: "#94a3b8",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontSize: "11px",
+                                fontWeight: 600,
+                                border: "1px solid rgba(148,163,184,0.35)",
+                                boxShadow: "0 5px 12px rgba(0,0,0,0.25)",
+                                padding: "0 6px",
+                                backdropFilter: "blur(6px)",
+                              }}
+                            >
+                              -
+                            </div>
+                          )}
+                          {p.time ? (
+                            <div
+                              style={{
+                                padding: "6px 10px",
+                                borderRadius: "10px",
+                                background: "linear-gradient(145deg, rgba(11,17,32,0.95), rgba(17,24,39,0.9))",
+                                color: "#e2e8f0",
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                border: "1px solid rgba(148,163,184,0.4)",
+                                boxShadow: "0 8px 14px rgba(0,0,0,0.26), 0 0 0 1px rgba(56,189,248,0.06)",
+                                backdropFilter: "blur(6px)",
+                              }}
+                            >
+                              {formatRawTime(p.time)}
+                            </div>
+                          ) : null}
                         </div>
-                      ) : (
-                        <div
-                          style={{
-                            minWidth: "26px",
-                            height: "26px",
-                            borderRadius: "9px",
-                            background: "rgba(15,23,42,0.85)",
-                            color: "#94a3b8",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: "11px",
-                            fontWeight: 600,
-                            border: "1px solid rgba(148,163,184,0.35)",
-                            boxShadow: "0 5px 12px rgba(0,0,0,0.25)",
-                            padding: "0 6px",
-                            backdropFilter: "blur(6px)",
-                          }}
-                        >
-                          -
+                      </Popup>
+                    </CircleMarker>
+                  ))}
+                  <RealisticVehicleMarker
+                    latitude={mapPoints[0].lat}
+                    longitude={mapPoints[0].lon}
+                    type={selectedDeviceType}
+                    speed={0}
+                    status="online"
+                    usePopup
+                  >
+                    <div className="text-xs text-slate-100">Início</div>
+                  </RealisticVehicleMarker>
+                  <RealisticVehicleMarker
+                    latitude={mapPoints[mapPoints.length - 1].lat}
+                    longitude={mapPoints[mapPoints.length - 1].lon}
+                    type={selectedDeviceType}
+                    speed={0}
+                    status="online"
+                    usePopup
+                  >
+                    <div className="text-xs text-slate-100">Fim</div>
+                  </RealisticVehicleMarker>
+                  <Marker
+                    position={[
+                      mapPoints[Math.floor(mapPoints.length / 2)].lat,
+                      mapPoints[Math.floor(mapPoints.length / 2)].lon,
+                    ]}
+                    icon={arrowIcon}
+                  />
+                </MapContainer>
+              </div>
+            </div>
+          )}
+
+          {(activeTab === "route" || activeTab === "trips" || activeTab === "stops" || activeTab === "events") && (
+            <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl p-4 border border-slate-800">
+              <h2 className="text-lg font-semibold text-slate-100 mb-2">{currentReportLabel}</h2>
+
+              {!loading && generatedTypes[activeTab] && currentRows.length === 0 && (
+                <div className="text-slate-400 text-sm">Nenhum registro no período selecionado.</div>
+              )}
+
+              {activeTab === "route" ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {currentRows.map((row) => (
+                    <div key={row.id} className="bg-slate-800 rounded-lg p-3 border border-slate-700">
+                      <div className="text-xs text-slate-400">Hora GPS</div>
+                      <div className="text-sm font-semibold text-slate-100">{row.time}</div>
+                      <div className="text-xs text-slate-400 mt-2">Tipo</div>
+                      <div className="text-sm font-semibold text-slate-100">{row.type}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : activeTab === "stops" ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {currentRows.map((row) => (
+                    <div key={row.id} className="bg-slate-800 rounded-lg p-3 border border-slate-700 space-y-1">
+                      <div>
+                        <div className="text-xs text-slate-400">Hora inicial</div>
+                        <div className="text-sm font-semibold text-slate-100">{row.start}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-400">Hora final</div>
+                        <div className="text-sm font-semibold text-slate-100">{row.end}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-400">Endereço</div>
+                        <div className="text-sm font-semibold text-slate-100">{row.address}</div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <div className="text-xs text-slate-400">Duração</div>
+                          <div className="text-sm font-semibold text-slate-100">{row.duration}</div>
                         </div>
+                        <div>
+                          <div className="text-xs text-slate-400">Horas ligado</div>
+                          <div className="text-sm font-semibold text-slate-100">{row.engineHours}</div>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-400">Gasto de Combustível</div>
+                        <div className="text-sm font-semibold text-slate-100">{row.fuel}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : activeTab === "trips" ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {currentRows.map((row) => (
+                    <div key={row.id} className="bg-slate-800 rounded-lg p-3 border border-slate-700 space-y-1">
+                      <div>
+                        <div className="text-xs text-slate-400">Hora inicial</div>
+                        <div className="text-sm font-semibold text-slate-100">{row.start}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-400">Hora final</div>
+                        <div className="text-sm font-semibold text-slate-100">{row.end}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-400">Distância</div>
+                        <div className="text-sm font-semibold text-slate-100">{row.distance}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-400">Velocidade média</div>
+                        <div className="text-sm font-semibold text-slate-100">{row.avgSpeed}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-400">Início do odômetro</div>
+                        <div className="text-sm font-semibold text-slate-100">{row.startOdometer}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-400">Fim do odômetro</div>
+                        <div className="text-sm font-semibold text-slate-100">{row.endOdometer}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-400">Velocidade máxima</div>
+                        <div className="text-sm font-semibold text-slate-100">{row.maxSpeed}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-400">Duração</div>
+                        <div className="text-sm font-semibold text-slate-100">{row.duration}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-400">Gasto de combustível</div>
+                        <div className="text-sm font-semibold text-slate-100">{row.fuel}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-400">Motorista</div>
+                        <div className="text-sm font-semibold text-slate-100">{row.driver}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-400">Endereço inicial</div>
+                        <div className="text-sm font-semibold text-slate-100">{row.startAddress}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-400">Endereço final</div>
+                        <div className="text-sm font-semibold text-slate-100">{row.endAddress}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : activeTab === "events" ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {currentRows.map((row) => (
+                    <div key={row.id} className="bg-slate-800 rounded-lg p-3 border border-slate-700 space-y-2">
+                      <div>
+                        <div className="text-xs text-slate-400">Horário</div>
+                        <div className="text-sm font-semibold text-slate-100">{row.time}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-slate-400">Evento</div>
+                        <div className="text-sm font-semibold text-slate-100">{row.event}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="overflow-auto max-h-[70vh]">
+                  <table className="min-w-full text-sm text-slate-200">
+                    <thead>
+                      {isResumo ? (
+                        <tr className="text-left text-slate-400 border-b border-slate-800">
+                          <th className="py-2 pr-4 whitespace-nowrap">Hora inicial</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Hora final</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Distância</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Velocidade Média</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Início do odômetro</th>
+                          <th className="py-2 pr-4">Endereço inicial</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Fim do odômetro</th>
+                          <th className="py-2 pr-4">Endereço final</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Velocidade Máxima</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Duração</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Gasto de Combustível</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Motorista</th>
+                        </tr>
+                      ) : isTrips ? (
+                        <tr className="text-left text-slate-400 border-b border-slate-800">
+                          <th className="py-2 pr-4 whitespace-nowrap">Hora inicial</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Hora final</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Distância</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Velocidade Média</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Início do odômetro</th>
+                          <th className="py-2 pr-4">Endereço inicial</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Fim do odômetro</th>
+                          <th className="py-2 pr-4">Endereço final</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Velocidade Máxima</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Duração</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Gasto de Combustível</th>
+                          <th className="py-2 pr-4 whitespace-nowrap">Motorista</th>
+                        </tr>
+                      ) : activeTab === "events" ? null : (
+                        <tr className="text-left text-slate-400 border-b border-slate-800">
+                          <th className="py-2 pr-4">Horário</th>
+                          <th className="py-2 pr-4">Distância</th>
+                          <th className="py-2 pr-4">Duração</th>
+                          <th className="py-2 pr-4">Evento</th>
+                        </tr>
                       )}
-                      {p.time ? (
-                        <div
-                          style={{
-                            padding: "6px 10px",
-                            borderRadius: "10px",
-                            background: "linear-gradient(145deg, rgba(11,17,32,0.95), rgba(17,24,39,0.9))",
-                            color: "#e2e8f0",
-                            fontSize: "11px",
-                            fontWeight: 700,
-                            border: "1px solid rgba(148,163,184,0.4)",
-                            boxShadow: "0 8px 14px rgba(0,0,0,0.26), 0 0 0 1px rgba(56,189,248,0.06)",
-                            backdropFilter: "blur(6px)",
-                          }}
-                        >
-                          {formatRawTime(p.time)}
-                        </div>
-                      ) : null}
-                    </div>
-                  </Popup>
-                </CircleMarker>
-              ))}
-              <RealisticVehicleMarker
-                latitude={mapPoints[0].lat}
-                longitude={mapPoints[0].lon}
-                type={selectedDeviceType}
-                speed={0}
-                status="online"
-                usePopup
-              >
-                <div className="text-xs text-slate-100">Início</div>
-              </RealisticVehicleMarker>
-              <RealisticVehicleMarker
-                latitude={mapPoints[mapPoints.length - 1].lat}
-                longitude={mapPoints[mapPoints.length - 1].lon}
-                type={selectedDeviceType}
-                speed={0}
-                status="online"
-                usePopup
-              >
-                <div className="text-xs text-slate-100">Fim</div>
-              </RealisticVehicleMarker>
-              <Marker
-                position={[
-                  mapPoints[Math.floor(mapPoints.length / 2)].lat,
-                  mapPoints[Math.floor(mapPoints.length / 2)].lon,
-                ]}
-                icon={arrowIcon}
-              />
-            </MapContainer>
-          </div>
-        </div>
-      )}
-
-
-      {(activeTab === "route" || activeTab === "trips" || activeTab === "stops" || activeTab === "events") && (
-        <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl p-4 border border-slate-800">
-          <h2 className="text-lg font-semibold text-slate-100 mb-2">
-            {currentReportLabel}
-          </h2>
-
-          {!loading && generatedTypes[activeTab] && currentRows.length === 0 && (
-            <div className="text-slate-400 text-sm">Nenhum registro no período selecionado.</div>
-          )}
-
-          {activeTab === "route" ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {currentRows.map((row) => (
-                <div key={row.id} className="bg-slate-800 rounded-lg p-3 border border-slate-700">
-                  <div className="text-xs text-slate-400">Hora GPS</div>
-                  <div className="text-sm font-semibold text-slate-100">{row.time}</div>
-                  <div className="text-xs text-slate-400 mt-2">Tipo</div>
-                  <div className="text-sm font-semibold text-slate-100">{row.type}</div>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                      {currentRows.map((row) =>
+                        isResumo ? (
+                          <tr key={row.id} className="border-b border-slate-800 last:border-0">
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.start}</td>
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.end}</td>
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.distance}</td>
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.avgSpeed}</td>
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.startOdometer}</td>
+                            <td className="py-2 pr-4">{row.startAddress}</td>
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.endOdometer}</td>
+                            <td className="py-2 pr-4">{row.endAddress}</td>
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.maxSpeed}</td>
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.duration}</td>
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.fuel}</td>
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.driver}</td>
+                          </tr>
+                        ) : isTrips ? (
+                          <tr key={row.id} className="border-b border-slate-800 last:border-0">
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.start}</td>
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.end}</td>
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.distance}</td>
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.avgSpeed}</td>
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.startOdometer}</td>
+                            <td className="py-2 pr-4">{row.startAddress}</td>
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.endOdometer}</td>
+                            <td className="py-2 pr-4">{row.endAddress}</td>
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.maxSpeed}</td>
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.duration}</td>
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.fuel}</td>
+                            <td className="py-2 pr-4 whitespace-nowrap">{row.driver}</td>
+                          </tr>
+                        ) : null
+                      )}
+                    </tbody>
+                  </table>
                 </div>
-              ))}
-            </div>
-          ) : activeTab === "stops" ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {currentRows.map((row) => (
-                <div key={row.id} className="bg-slate-800 rounded-lg p-3 border border-slate-700 space-y-1">
-                  <div>
-                    <div className="text-xs text-slate-400">Hora inicial</div>
-                    <div className="text-sm font-semibold text-slate-100">{row.start}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-400">Hora final</div>
-                    <div className="text-sm font-semibold text-slate-100">{row.end}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-400">Endereço</div>
-                    <div className="text-sm font-semibold text-slate-100">{row.address}</div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <div className="text-xs text-slate-400">Duração</div>
-                      <div className="text-sm font-semibold text-slate-100">{row.duration}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-slate-400">Horas ligado</div>
-                      <div className="text-sm font-semibold text-slate-100">{row.engineHours}</div>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-400">Gasto de Combustível</div>
-                    <div className="text-sm font-semibold text-slate-100">{row.fuel}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : activeTab === "trips" ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {currentRows.map((row) => (
-                <div key={row.id} className="bg-slate-800 rounded-lg p-3 border border-slate-700 space-y-1">
-                  <div>
-                    <div className="text-xs text-slate-400">Hora inicial</div>
-                    <div className="text-sm font-semibold text-slate-100">{row.start}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-400">Hora final</div>
-                    <div className="text-sm font-semibold text-slate-100">{row.end}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-400">Distância</div>
-                    <div className="text-sm font-semibold text-slate-100">{row.distance}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-400">Velocidade média</div>
-                    <div className="text-sm font-semibold text-slate-100">{row.avgSpeed}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-400">Início do odômetro</div>
-                    <div className="text-sm font-semibold text-slate-100">{row.startOdometer}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-400">Fim do odômetro</div>
-                    <div className="text-sm font-semibold text-slate-100">{row.endOdometer}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-400">Velocidade máxima</div>
-                    <div className="text-sm font-semibold text-slate-100">{row.maxSpeed}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-400">Duração</div>
-                    <div className="text-sm font-semibold text-slate-100">{row.duration}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-400">Gasto de combustível</div>
-                    <div className="text-sm font-semibold text-slate-100">{row.fuel}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-400">Motorista</div>
-                    <div className="text-sm font-semibold text-slate-100">{row.driver}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-400">Endereço inicial</div>
-                    <div className="text-sm font-semibold text-slate-100">{row.startAddress}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-400">Endereço final</div>
-                    <div className="text-sm font-semibold text-slate-100">{row.endAddress}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : activeTab === "events" ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {currentRows.map((row) => (
-                <div key={row.id} className="bg-slate-800 rounded-lg p-3 border border-slate-700 space-y-2">
-                  <div>
-                    <div className="text-xs text-slate-400">Horário</div>
-                    <div className="text-sm font-semibold text-slate-100">{row.time}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-slate-400">Evento</div>
-                    <div className="text-sm font-semibold text-slate-100">{row.event}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="overflow-auto max-h-[70vh]">
-              <table className="min-w-full text-sm text-slate-200">
-                <thead>
-                  {isResumo ? (
-                    <tr className="text-left text-slate-400 border-b border-slate-800">
-                      <th className="py-2 pr-4 whitespace-nowrap">Hora inicial</th>
-                      <th className="py-2 pr-4 whitespace-nowrap">Hora final</th>
-                      <th className="py-2 pr-4 whitespace-nowrap">Distância</th>
-                      <th className="py-2 pr-4 whitespace-nowrap">Velocidade Média</th>
-                      <th className="py-2 pr-4 whitespace-nowrap">Início do odômetro</th>
-                      <th className="py-2 pr-4">Endereço inicial</th>
-                      <th className="py-2 pr-4 whitespace-nowrap">Fim do odômetro</th>
-                      <th className="py-2 pr-4">Endereço final</th>
-                      <th className="py-2 pr-4 whitespace-nowrap">Velocidade Máxima</th>
-                      <th className="py-2 pr-4 whitespace-nowrap">Duração</th>
-                      <th className="py-2 pr-4 whitespace-nowrap">Gasto de Combustível</th>
-                      <th className="py-2 pr-4 whitespace-nowrap">Motorista</th>
-                    </tr>
-                  ) : isTrips ? (
-                    <tr className="text-left text-slate-400 border-b border-slate-800">
-                      <th className="py-2 pr-4 whitespace-nowrap">Hora inicial</th>
-                      <th className="py-2 pr-4 whitespace-nowrap">Hora final</th>
-                      <th className="py-2 pr-4 whitespace-nowrap">Distância</th>
-                      <th className="py-2 pr-4 whitespace-nowrap">Velocidade Média</th>
-                      <th className="py-2 pr-4 whitespace-nowrap">Início do odômetro</th>
-                      <th className="py-2 pr-4">Endereço inicial</th>
-                      <th className="py-2 pr-4 whitespace-nowrap">Fim do odômetro</th>
-                      <th className="py-2 pr-4">Endereço final</th>
-                      <th className="py-2 pr-4 whitespace-nowrap">Velocidade Máxima</th>
-                      <th className="py-2 pr-4 whitespace-nowrap">Duração</th>
-                      <th className="py-2 pr-4 whitespace-nowrap">Gasto de Combustível</th>
-                      <th className="py-2 pr-4 whitespace-nowrap">Motorista</th>
-                    </tr>
-                  ) : activeTab === "events" ? null : (
-                    <tr className="text-left text-slate-400 border-b border-slate-800">
-                      <th className="py-2 pr-4">Horário</th>
-                      <th className="py-2 pr-4">Distância</th>
-                      <th className="py-2 pr-4">Duração</th>
-                      <th className="py-2 pr-4">Evento</th>
-                    </tr>
-                  )}
-                </thead>
-                <tbody className="divide-y divide-slate-800">
-                  {currentRows.map((row) =>
-                    isResumo ? (
-                      <tr key={row.id} className="border-b border-slate-800 last:border-0">
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.start}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.end}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.distance}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.avgSpeed}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.startOdometer}</td>
-                        <td className="py-2 pr-4">{row.startAddress}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.endOdometer}</td>
-                        <td className="py-2 pr-4">{row.endAddress}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.maxSpeed}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.duration}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.fuel}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.driver}</td>
-                      </tr>
-                    ) : isTrips ? (
-                      <tr key={row.id} className="border-b border-slate-800 last:border-0">
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.start}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.end}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.distance}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.avgSpeed}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.startOdometer}</td>
-                        <td className="py-2 pr-4">{row.startAddress}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.endOdometer}</td>
-                        <td className="py-2 pr-4">{row.endAddress}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.maxSpeed}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.duration}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.fuel}</td>
-                        <td className="py-2 pr-4 whitespace-nowrap">{row.driver}</td>
-                      </tr>
-                    ) : null
-                  )}
-                </tbody>
-              </table>
+              )}
             </div>
           )}
-        </div>
-      )}
 
-      {activeTab === "resumo" && currentRows.length > 0 && (
-        <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl p-4 border border-slate-800">
-          <h2 className="text-lg font-semibold text-slate-100 mb-4">Resumo</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 text-sm text-slate-200">
-            {currentRows.map((row) => (
-              <React.Fragment key={row.id}>
-                <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
-                  <div className="text-xs text-slate-400">Hora inicial</div>
-                  <div className="text-base font-semibold">{row.start}</div>
-                </div>
-                <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
-                  <div className="text-xs text-slate-400">Hora final</div>
-                  <div className="text-base font-semibold">{row.end}</div>
-                </div>
-                <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
-                  <div className="text-xs text-slate-400">Distância</div>
-                  <div className="text-base font-semibold">{row.distance}</div>
-                </div>
-                <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
-                  <div className="text-xs text-slate-400">Velocidade média</div>
-                  <div className="text-base font-semibold">{row.avgSpeed}</div>
-                </div>
-                <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
-                  <div className="text-xs text-slate-400">Início do odômetro</div>
-                  <div className="text-base font-semibold">{row.startOdometer}</div>
-                </div>
-                <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
-                  <div className="text-xs text-slate-400">Fim do odômetro</div>
-                  <div className="text-base font-semibold">{row.endOdometer}</div>
-                </div>
-                <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
-                  <div className="text-xs text-slate-400">Velocidade máxima</div>
-                  <div className="text-base font-semibold">{row.maxSpeed}</div>
-                </div>
-                <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
-                  <div className="text-xs text-slate-400">Tempo total ligado</div>
-                  <div className="text-base font-semibold">{row.engineHours}</div>
-                </div>
-                <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
-                  <div className="text-xs text-slate-400">Tempo de partida do motor</div>
-                  <div className="text-base font-semibold">{row.engineHoursStart}</div>
-                </div>
-                <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
-                  <div className="text-xs text-slate-400">Encerrar horas do motor de partida</div>
-                  <div className="text-base font-semibold">{row.engineHoursEnd}</div>
-                </div>
-                <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
-                  <div className="text-xs text-slate-400">Gasto de combustível</div>
-                  <div className="text-base font-semibold">{row.fuel}</div>
-                </div>
-                <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
-                  <div className="text-xs text-slate-400">Motorista</div>
-                  <div className="text-base font-semibold">{row.driver}</div>
-                </div>
-              </React.Fragment>
-            ))}
-          </div>
-        </div>
+          {activeTab === "resumo" && currentRows.length > 0 && (
+            <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl p-4 border border-slate-800">
+              <h2 className="text-lg font-semibold text-slate-100 mb-4">Resumo</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 text-sm text-slate-200">
+                {currentRows.map((row) => (
+                  <React.Fragment key={row.id}>
+                    <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
+                      <div className="text-xs text-slate-400">Hora inicial</div>
+                      <div className="text-base font-semibold">{row.start}</div>
+                    </div>
+                    <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
+                      <div className="text-xs text-slate-400">Hora final</div>
+                      <div className="text-base font-semibold">{row.end}</div>
+                    </div>
+                    <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
+                      <div className="text-xs text-slate-400">Distância</div>
+                      <div className="text-base font-semibold">{row.distance}</div>
+                    </div>
+                    <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
+                      <div className="text-xs text-slate-400">Velocidade média</div>
+                      <div className="text-base font-semibold">{row.avgSpeed}</div>
+                    </div>
+                    <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
+                      <div className="text-xs text-slate-400">Início do odômetro</div>
+                      <div className="text-base font-semibold">{row.startOdometer}</div>
+                    </div>
+                    <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
+                      <div className="text-xs text-slate-400">Fim do odômetro</div>
+                      <div className="text-base font-semibold">{row.endOdometer}</div>
+                    </div>
+                    <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
+                      <div className="text-xs text-slate-400">Velocidade máxima</div>
+                      <div className="text-base font-semibold">{row.maxSpeed}</div>
+                    </div>
+                    <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
+                      <div className="text-xs text-slate-400">Tempo total ligado</div>
+                      <div className="text-base font-semibold">{row.engineHours}</div>
+                    </div>
+                    <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
+                      <div className="text-xs text-slate-400">Tempo de partida do motor</div>
+                      <div className="text-base font-semibold">{row.engineHoursStart}</div>
+                    </div>
+                    <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
+                      <div className="text-xs text-slate-400">Encerrar horas do motor de partida</div>
+                      <div className="text-base font-semibold">{row.engineHoursEnd}</div>
+                    </div>
+                    <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
+                      <div className="text-xs text-slate-400">Gasto de combustível</div>
+                      <div className="text-base font-semibold">{row.fuel}</div>
+                    </div>
+                    <div className="bg-slate-800 rounded-lg p-3 border border-slate-700">
+                      <div className="text-xs text-slate-400">Motorista</div>
+                      <div className="text-base font-semibold">{row.driver}</div>
+                    </div>
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

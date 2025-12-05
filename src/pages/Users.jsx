@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import {
   getUsers,
@@ -8,7 +8,6 @@ import {
 import UserModal from "../components/UserModal";
 import DeleteUserModal from "../components/DeleteUserModal";
 import UserDevicesModal from "../components/UserDevicesModal";
-import { fetchLogs } from "../services/logs";
 
 const buildPermissionsMap = (list) => {
   return (list || []).reduce((acc, perm) => {
@@ -31,10 +30,42 @@ const hasIntersection = (a, b) => {
   return false;
 };
 
-export default function Users() {
-  const { user: currentUser } = useAuth();
-  const isAdmin = Boolean(currentUser?.admin || currentUser?.administrator);
+const LOCAL_LINKS_KEY = "userDeviceLinks";
 
+const loadLocalLinks = () => {
+  try {
+    const raw = localStorage.getItem(LOCAL_LINKS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return Object.keys(parsed || {}).reduce((acc, key) => {
+      const set = new Set(Array.isArray(parsed[key]) ? parsed[key].map((v) => Number(v)) : []);
+      acc[Number(key)] = set;
+      return acc;
+    }, {});
+  } catch {
+    return {};
+  }
+};
+
+const saveLocalLinks = (map) => {
+  try {
+    const plain = {};
+    Object.keys(map || {}).forEach((key) => {
+      const set = map[key];
+      plain[key] = Array.isArray(set) ? set : Array.from(set || []);
+    });
+    localStorage.setItem(LOCAL_LINKS_KEY, JSON.stringify(plain));
+  } catch {
+    // ignora persistência
+  }
+};
+
+export default function Users() {
+  const { user: currentUser, can, role } = useAuth();
+  const canView = can("users.view");
+  const isAdmin = role === "admin";
+  // Exibe o botão de criação sempre
+  const canCreateUser = true;
   const [users, setUsers] = useState([]);
   const [devices, setDevices] = useState([]);
   const [permissionsByUser, setPermissionsByUser] = useState({});
@@ -44,73 +75,65 @@ export default function Users() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [devicesModalOpen, setDevicesModalOpen] = useState(false);
-  const [sessionLogs, setSessionLogs] = useState([]);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [userList, deviceList, permissionList] = await Promise.all([
+      const [userList, deviceList, permissionListRaw] = await Promise.all([
         getUsers(),
         getDevices(),
         getPermissions({ all: true }), // admin vê tudo; não filtra tipo
       ]);
+      const extraPermissions = await getPermissions({ all: true, type: "userDevice" }).catch(() => []);
+      let permissionList = [
+        ...(Array.isArray(permissionListRaw) ? permissionListRaw : []),
+        ...(Array.isArray(extraPermissions) ? extraPermissions : []),
+      ];
+      if (permissionList.length === 0 && Array.isArray(userList)) {
+        const perUser = await Promise.all(
+          userList.map((u) => getPermissions({ all: true, userId: u.id }).catch(() => []))
+        );
+        permissionList = perUser.flat();
+      }
       setUsers(Array.isArray(userList) ? userList : []);
       setDevices(Array.isArray(deviceList) ? deviceList : []);
-      const permsMap = buildPermissionsMap(Array.isArray(permissionList) ? permissionList : []);
+      const permsMap = buildPermissionsMap(permissionList);
 
       // Garante entradas vazias para todos os usuários
       (Array.isArray(userList) ? userList : []).forEach((u) => {
         const uid = Number(u.id);
         if (!permsMap[uid]) permsMap[uid] = new Set();
       });
+      // mescla vínculos locais (persistência no front)
+      const localLinks = loadLocalLinks();
+      Object.keys(localLinks).forEach((k) => {
+        const uid = Number(k);
+        if (!permsMap[uid]) permsMap[uid] = new Set();
+        localLinks[uid].forEach((devId) => permsMap[uid].add(devId));
+      });
       // Garante entrada para o usuário logado
       if (currentUser?.id && !permsMap[currentUser.id]) {
         permsMap[currentUser.id] = new Set();
       }
       setPermissionsByUser(permsMap);
-    } catch (err) {
+      saveLocalLinks(permsMap);
+    } catch (error) {
+      console.warn("Erro ao carregar dados de usuários:", error);
       setError("Erro ao carregar dados de usuários.");
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    if (currentUser) loadData();
   }, [currentUser]);
 
   useEffect(() => {
-    // admins visualizam logs remotos
-    if (!isAdmin) return;
-    let active = true;
-    let interval;
-
-    const loadLogs = async () => {
-      try {
-        const list = await fetchLogs();
-        if (active) {
-          setSessionLogs(Array.isArray(list) ? list : []);
-        }
-      } catch (err) {
-        if (active) {
-          setError("Não foi possível carregar logs remotos (verifique LOG_API_URL e servidor de logs).");
-        }
-      }
-    };
-
-    loadLogs();
-    interval = setInterval(loadLogs, 5000);
-
-    return () => {
-      active = false;
-      if (interval) clearInterval(interval);
-    };
-  }, [isAdmin, modalOpen, deleteOpen, devicesModalOpen]);
+    if (!currentUser || !canView) return;
+    void loadData();
+  }, [currentUser, loadData, canView]);
 
   const filteredUsers = useMemo(() => {
     if (!currentUser) return [];
-    if (isAdmin) return users;
+    if (isAdmin || can("users.view")) return users;
 
     const currentDevices = permissionsByUser[currentUser.id] || new Set();
     return users.filter(
@@ -118,13 +141,13 @@ export default function Users() {
         u.id === currentUser.id ||
         hasIntersection(currentDevices, permissionsByUser[u.id] || new Set())
     );
-  }, [users, isAdmin, permissionsByUser, currentUser]);
+  }, [users, isAdmin, permissionsByUser, currentUser, can]);
 
   const currentUserDevices = permissionsByUser[currentUser?.id] || new Set();
 
   const canManageUser = (targetUser) => {
     if (!currentUser) return false;
-    if (isAdmin) return true;
+    if (isAdmin || can("users.manage") || can("users.edit")) return true;
     const targetSet = permissionsByUser[targetUser.id] || new Set();
     // usuário pode gerenciar quem compartilha device ou a si mesmo
     if (targetUser.id === currentUser.id) return true;
@@ -150,8 +173,9 @@ export default function Users() {
   };
 
   const handleDevices = (user) => {
+    if (!canManageUser(user)) return;
     setSelectedUser(user);
-    // Assegura que há entrada em permissionsByUser para o alvo
+    // garante entrada local para o usuário
     setPermissionsByUser((prev) => {
       if (prev[user.id]) return prev;
       return { ...prev, [user.id]: new Set() };
@@ -159,54 +183,53 @@ export default function Users() {
     setDevicesModalOpen(true);
   };
 
-  const totalDevicesFor = (userId) =>
-    permissionsByUser[userId] ? Array.from(permissionsByUser[userId]).length : 0;
-
-  const devicesForUser = (userId) => {
-    const ids = permissionsByUser[userId] || new Set();
-    return devices.filter((d) => ids.has(Number(d.id)));
-  };
-
   return (
     <div className="p-4 space-y-4 bg-slate-950 text-slate-100">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-100">Usuários</h1>
-          <p className="text-sm text-slate-400">Gerencie usuários, permissões e veículos vinculados.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-slate-400">Dispositivos carregados: {devices.length}</span>
-          {isAdmin && (
-            <button
-              onClick={handleNew}
-              className="bg-sky-500 hover:bg-sky-400 text-slate-900 px-4 py-2 h-[46px] rounded-[10px] font-semibold shadow-[0_0_16px_rgba(14,165,233,0.45)] transition"
-            >
-              + Novo usuário
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-        <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
-          <div className="text-xs text-slate-400">Usuários</div>
-          <div className="text-xl font-semibold text-slate-100">{users.length}</div>
-        </div>
-        <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
-          <div className="text-xs text-slate-400">Dispositivos</div>
-          <div className="text-xl font-semibold text-slate-100">{devices.length}</div>
-        </div>
-        <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
-          <div className="text-xs text-slate-400">Total vínculos</div>
-          <div className="text-xl font-semibold text-slate-100">
-            {Object.values(permissionsByUser).reduce((sum, set) => sum + (set?.size || 0), 0)}
+      {!canView ? (
+        <>
+          <h1 className="text-2xl font-bold">Usuários</h1>
+          <p className="text-sm text-red-300 mt-2">Você não tem permissão para visualizar usuários.</p>
+        </>
+      ) : (
+        <>
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-bold text-slate-100">Usuários</h1>
+              <p className="text-sm text-slate-400">Gerencie usuários, permissões e veículos vinculados.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-slate-400">Dispositivos carregados: {devices.length}</span>
+              {canCreateUser && (
+                <button
+                  onClick={handleNew}
+                  className="bg-sky-500 hover:bg-sky-400 text-slate-900 px-4 py-2 h-[46px] rounded-[10px] font-semibold shadow-[0_0_16px_rgba(14,165,233,0.45)] transition"
+                >
+                  + Novo usuário
+                </button>
+              )}
+            </div>
           </div>
-        </div>
-      </div>
 
-      {error && <div className="text-red-400 text-sm">{error}</div>}
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
+              <div className="text-xs text-slate-400">Usuários</div>
+              <div className="text-xl font-semibold text-slate-100">{users.length}</div>
+            </div>
+            <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
+              <div className="text-xs text-slate-400">Dispositivos</div>
+              <div className="text-xl font-semibold text-slate-100">{devices.length}</div>
+            </div>
+            <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
+              <div className="text-xs text-slate-400">Total vínculos</div>
+              <div className="text-xl font-semibold text-slate-100">
+                {Object.values(permissionsByUser).reduce((sum, set) => sum + (set?.size || 0), 0)}
+              </div>
+            </div>
+          </div>
 
-      <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl border border-slate-800 overflow-hidden">
+          {error && <div className="text-red-400 text-sm">{error}</div>}
+
+          <div className="bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.35)] rounded-2xl border border-slate-800 overflow-hidden">
         <div className="overflow-auto max-h-[70vh]">
           <table className="min-w-full text-sm">
             <thead>
@@ -215,31 +238,27 @@ export default function Users() {
                 <th className="py-3 px-4">Email</th>
                 <th className="py-3 px-4">Telefone</th>
                 <th className="py-3 px-4">Tipo</th>
-                <th className="py-3 px-4">Total de dispositivos</th>
-                <th className="py-3 px-4">Lista</th>
                 <th className="py-3 px-4">Status</th>
                 <th className="py-3 px-4 text-right">Ações</th>
-                <th className="py-3 px-4 text-right">Dispositivos</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td className="py-4 px-4" colSpan={9}>
+                  <td className="py-4 px-4" colSpan={6}>
                     Carregando...
                   </td>
                 </tr>
               ) : filteredUsers.length === 0 ? (
                 <tr>
-                  <td className="py-4 px-4" colSpan={9}>
+                  <td className="py-4 px-4" colSpan={6}>
                     Nenhum usuário encontrado.
                   </td>
                 </tr>
               ) : (
                 filteredUsers.map((u) => {
-                  const totalDevices = totalDevicesFor(u.id);
                   const isUserAdmin = Boolean(u.admin || u.administrator);
-                  const accessLevel = u.attributes?.accessLevel || (isUserAdmin ? "admin" : "user");
+                  const accessLevel = isUserAdmin ? "admin" : "user";
                   return (
                     <tr key={u.id} className="border-b border-slate-800 last:border-0">
                       <td className="py-3 px-4 font-semibold text-slate-100 flex items-center gap-2">
@@ -263,22 +282,6 @@ export default function Users() {
                           {accessLevel}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-slate-200">{totalDevices}</td>
-                      <td className="py-3 px-4">
-                        <div className="flex flex-wrap gap-1">
-                          {devicesForUser(u.id).map((dev) => (
-                            <span
-                              key={dev.id}
-                              className="px-2 py-1 rounded-full bg-slate-800 text-slate-200 text-xs border border-slate-700"
-                            >
-                              {dev.name || dev.uniqueId || dev.id}
-                            </span>
-                          ))}
-                          {devicesForUser(u.id).length === 0 && (
-                            <span className="text-xs text-slate-500">Nenhum</span>
-                          )}
-                        </div>
-                      </td>
                       <td className="py-3 px-4">
                         <span
                           className={`px-2 py-1 rounded-full text-xs font-semibold ${
@@ -291,50 +294,24 @@ export default function Users() {
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right space-x-2">
-                        {canManageUser(u) ? (
-                          <>
-                            {isAdmin && (
-                              <>
-                                <button
-                                  onClick={() => handleEdit(u)}
-                                  className="px-3 py-1 rounded-[10px] border border-slate-700 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_10px_rgba(14,165,233,0.35)] transition"
-                                >
-                                  Editar
-                                </button>
-                                <button
-                                  onClick={() => handleDelete(u)}
-                                  className="px-3 py-1 rounded-[10px] border border-red-700 text-red-200 hover:border-red-400 transition"
-                                >
-                                  Excluir
-                                </button>
-                              </>
-                            )}
-                            <button
-                              onClick={() => handleDevices(u)}
-                              className="px-3 py-1 rounded-[10px] border border-slate-700 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_10px_rgba(14,165,233,0.35)] transition"
-                            >
-                              Distribuir
-                            </button>
-                          </>
-                        ) : (
-                          <span className="text-slate-400 text-xs">
-                            Sem permissão
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        {canManageUser(u) ? (
-                          <button
-                            onClick={() => handleDevices(u)}
-                            className="px-3 py-1 rounded-[10px] border border-slate-700 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_10px_rgba(14,165,233,0.35)] transition"
-                          >
-                            Distribuir dispositivos
-                          </button>
-                        ) : (
-                          <span className="text-slate-400 text-xs">
-                            Sem permissão
-                          </span>
-                        )}
+                        <button
+                          onClick={() => handleEdit(u)}
+                          className="px-3 py-1 rounded-[10px] border border-slate-700 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_10px_rgba(14,165,233,0.35)] transition"
+                        >
+                          Editar
+                        </button>
+                        <button
+                          onClick={() => handleDelete(u)}
+                          className="px-3 py-1 rounded-[10px] border border-red-700 text-red-200 hover:border-red-400 transition"
+                        >
+                          Excluir
+                        </button>
+                        <button
+                          onClick={() => handleDevices(u)}
+                          className="px-3 py-1 rounded-[10px] border border-slate-700 text-slate-100 hover:border-sky-500/60 hover:shadow-[0_0_10px_rgba(14,165,233,0.35)] transition"
+                        >
+                          Vincular dispositivos
+                        </button>
                       </td>
                     </tr>
                   );
@@ -343,38 +320,44 @@ export default function Users() {
             </tbody>
           </table>
         </div>
-      </div>
+          </div>
 
-      <UserModal
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
-        onSaved={loadData}
-        user={selectedUser}
-      />
+          <UserModal
+            open={modalOpen}
+            onClose={() => setModalOpen(false)}
+            onSaved={loadData}
+            user={selectedUser}
+          />
 
-      <DeleteUserModal
-        open={deleteOpen}
-        onClose={() => setDeleteOpen(false)}
-        onDeleted={loadData}
-        user={selectedUser}
-      />
+          <DeleteUserModal
+            open={deleteOpen}
+            onClose={() => setDeleteOpen(false)}
+            onDeleted={loadData}
+            user={selectedUser}
+          />
 
-      <UserDevicesModal
-        open={devicesModalOpen}
-        onClose={() => setDevicesModalOpen(false)}
-        onSaved={loadData}
-        user={selectedUser}
-        devices={devices}
-        allowedDevices={isAdmin ? devices : devices.filter((d) => currentUserDevices.has(d.id))}
-        assigned={selectedUser ? permissionsByUser[selectedUser.id] : new Set()}
-        onSavedSelection={(userId, selectedSet) => {
-          // atualiza permissões locais para refletir imediatamente na UI
-          setPermissionsByUser((prev) => ({
-            ...prev,
-            [userId]: new Set(Array.from(selectedSet).map((v) => Number(v))),
-          }));
-        }}
-      />
+          <UserDevicesModal
+            open={devicesModalOpen}
+            onClose={() => setDevicesModalOpen(false)}
+            onSaved={loadData}
+          user={selectedUser}
+          devices={devices}
+          allowedDevices={isAdmin ? devices : devices.filter((d) => currentUserDevices.has(d.id))}
+          assigned={selectedUser ? permissionsByUser[selectedUser.id] : new Set()}
+          onSavedSelection={(userId, selectedSet) => {
+            // atualiza permissões locais para refletir imediatamente na UI
+            setPermissionsByUser((prev) => {
+              const updated = {
+                ...prev,
+                [userId]: new Set(Array.from(selectedSet).map((v) => Number(v))),
+              };
+              saveLocalLinks(updated);
+              return updated;
+            });
+          }}
+        />
+        </>
+      )}
     </div>
   );
 }

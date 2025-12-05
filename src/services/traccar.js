@@ -44,20 +44,50 @@ async function enrichWithAddress(list, coordsExtractor) {
   );
 }
 
-// ➤ Buscar dispositivos (nome, status, etc)
+// ➤ Buscar dispositivos (nome, status, etc) e enriquecer com posição e motorista
 export async function getDevices() {
   try {
-    const [res, positions] = await Promise.all([api.get("/devices"), getPositions()]);
+    const [res, positions, driversRes, permsRes] = await Promise.all([
+      api.get("/devices"),
+      getPositions(),
+      api.get("/drivers").catch(() => ({ data: [] })), // motoristas
+      api.get("/permissions", { params: { all: true } }).catch(() => ({ data: [] })), // vínculos
+    ]);
+
     const posByDevice = {};
     (positions || []).forEach((p) => {
       if (p?.deviceId != null) posByDevice[p.deviceId] = p;
     });
+
+    const drivers = Array.isArray(driversRes?.data) ? driversRes.data : [];
+    const driverById = drivers.reduce((acc, drv) => {
+      if (drv?.id != null) acc[drv.id] = drv;
+      return acc;
+    }, {});
+
+    const driverByDevice = {};
+    const perms = Array.isArray(permsRes?.data) ? permsRes.data : [];
+    perms.forEach((p) => {
+      if (p?.driverId != null && p?.deviceId != null) {
+        driverByDevice[p.deviceId] = p.driverId;
+      }
+    });
+
     const devices = Array.isArray(res.data) ? res.data : [];
-    // Enriquecer com endereço da última posição (quando disponível)
+    // Enriquecer com endereço e motorista
     return devices.map((d) => {
       const pos = posByDevice[d.id];
       const address = pos?.address || d.address;
-      return address ? { ...d, address } : d;
+      const driverId = driverByDevice[d.id];
+      const driver = driverId ? driverById[driverId] : null;
+      return {
+        ...d,
+        ...(address ? { address } : {}),
+        driverId: driverId || d.driverId || null,
+        driverName: driver?.name || d.driverName || null,
+        driverUniqueId: driver?.uniqueId || d.driverUniqueId || null,
+        driver,
+      };
     });
   } catch (err) {
     console.error("Erro ao obter dispositivos:", err);
@@ -179,7 +209,7 @@ export async function deleteDevice(id) {
 // ➤ Usuários
 export async function getUsers() {
   try {
-    const res = await api.get("/users");
+    const res = await api.get("/users", { params: { all: true } });
     return res.data;
   } catch (err) {
     console.error("Erro ao obter usuários:", err);
@@ -210,6 +240,15 @@ export async function getAuditLogs(params = {}) {
   }
 }
 
+const buildPermissionsAttributes = (data) => {
+  // Admin mantém todas as permissões; demais respeitam o objeto recebido.
+  if (data.admin || data.administrator) {
+    return { view: true, create: true, edit: true, delete: true, devicesCreate: true };
+  }
+  if (data.permissions) return data.permissions;
+  return data.attributes?.permissions || {};
+};
+
 export async function createUser(data) {
   const buildAttrs = () => ({
     ...(data.attributes || {}),
@@ -217,17 +256,7 @@ export async function createUser(data) {
     address: data.address || "",
     notes: data.notes || "",
     accessLevel: data.accessLevel || "user",
-    permissions: {
-      create: !!data.permCreate,
-      edit: !!data.permEdit,
-      delete: !!data.permDelete,
-      view: !!data.permView,
-      finance: !!data.permFinance,
-      reports: !!data.permReports,
-      map: !!data.permMap,
-      settings: !!data.permSettings,
-      export: !!data.permExport,
-    },
+    permissions: buildPermissionsAttributes(data),
     startDate: data.startDate || "",
     expiryDate: data.expiryDate || "",
     lastAccess: data.lastAccess || "",
@@ -267,18 +296,10 @@ export async function updateUser(id, data) {
       address: data.address ?? prev.address ?? "",
       notes: data.notes ?? prev.notes ?? "",
       accessLevel: data.accessLevel ?? prev.accessLevel ?? "user",
-      permissions: {
-        ...(prev.permissions || {}),
-        create: data.permCreate ?? prev.permissions?.create ?? false,
-        edit: data.permEdit ?? prev.permissions?.edit ?? false,
-        delete: data.permDelete ?? prev.permissions?.delete ?? false,
-        view: data.permView ?? prev.permissions?.view ?? true,
-        finance: data.permFinance ?? prev.permissions?.finance ?? false,
-        reports: data.permReports ?? prev.permissions?.reports ?? true,
-        map: data.permMap ?? prev.permissions?.map ?? true,
-        settings: data.permSettings ?? prev.permissions?.settings ?? false,
-        export: data.permExport ?? prev.permissions?.export ?? false,
-      },
+      permissions: buildPermissionsAttributes({
+        ...data,
+        permissions: data.permissions || prev.permissions || {},
+      }),
       startDate: data.startDate ?? prev.startDate ?? "",
       expiryDate: data.expiryDate ?? prev.expiryDate ?? "",
       lastAccess: prev.lastAccess || data.lastAccess || "",
@@ -371,6 +392,146 @@ export async function removeUserDevicePermission(userId, deviceId) {
   const res = await api.delete("/permissions", {
     params: { userId, deviceId },
     data: { userId, deviceId },
+  });
+  return res.data;
+}
+
+// ➤ Notificações (Traccar 6.10)
+export async function getNotifications() {
+  try {
+    const res = await api.get("/notifications");
+    return Array.isArray(res.data) ? res.data : [];
+  } catch (err) {
+    console.error("Erro ao obter notificações:", err);
+    return [];
+  }
+}
+
+export async function createNotification(data) {
+  const payload = {
+    type: data.type || "alarm",
+    always: true,
+    notifications: true,
+    text: data.message || data.title || "Alerta",
+    attributes: {
+      ...data.attributes,
+      frontendRule: {
+        title: data.title,
+        message: data.message,
+        color: data.color,
+        events: data.events,
+        showPopup: data.showPopup,
+        playSound: data.playSound,
+        enabled: data.enabled,
+        scope: data.scope,
+        deviceId: data.deviceId,
+      },
+    },
+  };
+  const res = await api.post("/notifications", payload);
+  return res.data;
+}
+
+export async function updateNotification(id, data) {
+  const payload = {
+    id,
+    type: data.type || "alarm",
+    always: true,
+    notifications: true,
+    text: data.message || data.title || "Alerta",
+    attributes: {
+      ...data.attributes,
+      frontendRule: {
+        title: data.title,
+        message: data.message,
+        color: data.color,
+        events: data.events,
+        showPopup: data.showPopup,
+        playSound: data.playSound,
+        enabled: data.enabled,
+        scope: data.scope,
+        deviceId: data.deviceId,
+      },
+    },
+  };
+  const res = await api.put(`/notifications/${id}`, payload);
+  return res.data;
+}
+
+export async function deleteNotification(id) {
+  const res = await api.delete(`/notifications/${id}`);
+  return res.data;
+}
+
+export async function assignNotificationToUser(userId, notificationId) {
+  const res = await api.post("/permissions", { userId, notificationId });
+  return res.data;
+}
+
+export async function removeNotificationFromUser(userId, notificationId) {
+  const res = await api.delete("/permissions", {
+    params: { userId, notificationId },
+    data: { userId, notificationId },
+  });
+  return res.data;
+}
+
+// ➤ Motoristas
+export async function getDrivers() {
+  try {
+    const res = await api.get("/drivers");
+    return res.data;
+  } catch (err) {
+    console.error("Erro ao obter motoristas:", err);
+    return [];
+  }
+}
+
+export async function createDriver(data) {
+  const payload = {
+    name: data.name,
+    uniqueId: data.uniqueId,
+    attributes: {
+      license: data.license || "",
+      phone: data.phone || "",
+      notes: data.notes || "",
+    },
+  };
+  const res = await api.post("/drivers", payload);
+  return res.data;
+}
+
+export async function updateDriver(id, data) {
+  const prev = data.attributes || {};
+  const payload = {
+    id,
+    name: data.name,
+    uniqueId: data.uniqueId,
+    attributes: {
+      ...prev,
+      license: data.license ?? prev.license ?? "",
+      phone: data.phone ?? prev.phone ?? "",
+      notes: data.notes ?? prev.notes ?? "",
+    },
+  };
+  const res = await api.put(`/drivers/${id}`, payload);
+  return res.data;
+}
+
+export async function deleteDriver(id) {
+  const res = await api.delete(`/drivers/${id}`);
+  return res.data;
+}
+
+export async function assignDriverToDevice(deviceId, driverId) {
+  const res = await api.post("/permissions", { deviceId, driverId });
+  return res.data;
+}
+
+export async function removeDriverFromDevice(deviceId, driverId) {
+  const res = await api.delete("/permissions", {
+    params: { deviceId, driverId },
+    data: { deviceId, driverId },
   });
   return res.data;
 }

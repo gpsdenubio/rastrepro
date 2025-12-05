@@ -24,7 +24,8 @@ export default function Dashboard() {
       setDevices(Array.isArray(devs) ? devs : []);
       setUsers(Array.isArray(usr) ? usr : []);
       setEvents(Array.isArray(evs) ? evs.slice(-10).reverse() : []);
-    } catch (err) {
+    } catch (error) {
+      console.warn("Não foi possível carregar dados do painel:", error);
       setError("Não foi possível carregar dados do painel.");
     } finally {
       setLoading(false);

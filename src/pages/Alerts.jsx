@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import { getDevices, getEvents, getPositions } from "../services/traccar";
+import { useAuth } from "../context/AuthContext";
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -25,10 +26,12 @@ const mapEventSeverity = (type) => {
 };
 
 export default function Alerts() {
+  const { can } = useAuth();
   const [devices, setDevices] = useState([]);
   const [events, setEvents] = useState([]);
   const [selected, setSelected] = useState(null);
   const [error, setError] = useState("");
+  const canView = can("alerts.view");
 
   const deviceNameById = useMemo(() => {
     const map = {};
@@ -54,10 +57,11 @@ export default function Alerts() {
     return map[type] || type || "Evento";
   };
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
+    if (!canView) return;
     try {
       const now = new Date();
-      const from = new Date(now.getTime() - 60 * 60 * 1000); // últimos 60 min
+      const from = new Date(now.getTime() - 60 * 60 * 1000);
       const [devs, evs, pos] = await Promise.all([
         getDevices(),
         getEvents({ from: from.toISOString(), to: now.toISOString(), all: true }),
@@ -89,19 +93,27 @@ export default function Alerts() {
         .reverse();
       setDevices(Array.isArray(devs) ? devs : []);
       setEvents(enriched);
-    } catch (err) {
+    } catch (error) {
+      console.warn("Não foi possível carregar eventos:", error);
       setError("Não foi possível carregar eventos.");
     }
-  };
+  }, [canView]);
 
   useEffect(() => {
-    loadData();
-    // interval removido para evitar mensagem de atualização automática
-    return () => {};
-  }, []);
+    if (!canView) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadData();
+  }, [canView, loadData]);
 
   return (
     <div className="p-4 md:p-6 space-y-4 bg-slate-950 text-slate-100">
+      {!canView ? (
+        <div>
+          <h1 className="text-2xl font-semibold">Eventos</h1>
+          <p className="text-sm text-red-300 mt-2">Você não tem permissão para visualizar eventos.</p>
+        </div>
+      ) : (
+        <>
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-slate-100">Eventos</h1>
@@ -201,6 +213,8 @@ export default function Alerts() {
           )}
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }
