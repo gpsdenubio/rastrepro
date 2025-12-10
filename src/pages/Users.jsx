@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import {
   getUsers,
@@ -66,8 +66,32 @@ export default function Users() {
   const isAdmin = role === "admin";
   // Exibe o botão de criação sempre
   const canCreateUser = true;
-  const [users, setUsers] = useState([]);
-  const [devices, setDevices] = useState([]);
+  const [users, setUsers] = useState(() => {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("cache:users");
+      if (stored) {
+        try {
+          return JSON.parse(stored);
+        } catch {
+          return [];
+        }
+      }
+    }
+    return [];
+  });
+  const [devices, setDevices] = useState(() => {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("cache:devices");
+      if (stored) {
+        try {
+          return JSON.parse(stored);
+        } catch {
+          return [];
+        }
+      }
+    }
+    return [];
+  });
   const [permissionsByUser, setPermissionsByUser] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -75,9 +99,12 @@ export default function Users() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [devicesModalOpen, setDevicesModalOpen] = useState(false);
+  const firstLoadDoneRef = useRef(false);
 
   const loadData = useCallback(async () => {
-    setLoading(true);
+    const shouldShowLoading =
+      !firstLoadDoneRef.current && users.length === 0 && devices.length === 0;
+    if (shouldShowLoading) setLoading(true);
     setError("");
     try {
       const [userList, deviceList, permissionListRaw] = await Promise.all([
@@ -123,13 +150,36 @@ export default function Users() {
       setError("Erro ao carregar dados de usuários.");
     } finally {
       setLoading(false);
+      firstLoadDoneRef.current = true;
     }
-  }, [currentUser]);
+  }, [currentUser, users.length, devices.length]);
 
   useEffect(() => {
     if (!currentUser || !canView) return;
     void loadData();
   }, [currentUser, loadData, canView]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("cache:users", JSON.stringify(users));
+    }
+  }, [users]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("cache:devices", JSON.stringify(devices));
+    }
+  }, [devices]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const plain = {};
+      Object.keys(permissionsByUser || {}).forEach((key) => {
+        plain[key] = Array.from(permissionsByUser[key] || []);
+      });
+      localStorage.setItem("cache:user-permissions", JSON.stringify(plain));
+    }
+  }, [permissionsByUser]);
 
   const filteredUsers = useMemo(() => {
     if (!currentUser) return [];
@@ -243,13 +293,7 @@ export default function Users() {
               </tr>
             </thead>
             <tbody>
-              {loading ? (
-                <tr>
-                  <td className="py-4 px-4" colSpan={6}>
-                    Carregando...
-                  </td>
-                </tr>
-              ) : filteredUsers.length === 0 ? (
+              {filteredUsers.length === 0 ? (
                 <tr>
                   <td className="py-4 px-4" colSpan={6}>
                     Nenhum usuário encontrado.

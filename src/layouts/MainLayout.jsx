@@ -41,7 +41,15 @@ export default function MainLayout({ children }) {
 
   return (
     <div className="flex h-screen overflow-hidden bg-gradient-to-br from-slate-900 via-slate-950 to-black text-slate-100">
-      <Sidebar open={open} />
+      <Sidebar open={open} onClose={handleToggle} />
+      {/* Overlay para mobile: permite fechar tocando fora e não afeta desktop */}
+      <div
+        role="presentation"
+        onClick={open ? handleToggle : undefined}
+        className={`fixed inset-0 bg-black/50 backdrop-blur-[1px] transition-opacity duration-200 md:hidden ${
+          open ? "opacity-100 pointer-events-auto z-30" : "opacity-0 pointer-events-none"
+        }`}
+      />
 
       <div className="flex flex-col flex-1 overflow-hidden">
         <TopBar onToggleSidebar={handleToggle} />

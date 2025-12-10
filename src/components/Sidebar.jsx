@@ -4,7 +4,7 @@ import { NavLink, useLocation } from "react-router-dom";
 import { Home, MapPin, List, Bell, LogOut, Users, FileText, Settings, User, BellRing } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
-export default function Sidebar({ open }) {
+export default function Sidebar({ open, onClose }) {
   const { can } = useAuth();
   const location = useLocation();
 
@@ -29,13 +29,21 @@ export default function Sidebar({ open }) {
         open ? "translate-x-0 w-64" : "-translate-x-full md:translate-x-0 md:w-16"
       }`}
     >
-      <div className="h-16 flex items-center px-3 border-b border-slate-800">
+      <div className="h-16 flex items-center px-3 border-b border-slate-800 relative">
         <div className="flex items-center gap-2 text-slate-100">
           {open && <span className="font-bold text-lg text-sky-400">RastrePro</span>}
         </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-3 top-1/2 -translate-y-1/2 h-10 w-10 rounded-xl bg-slate-800 text-slate-200 border border-slate-700 hover:border-sky-500/60 md:hidden"
+          aria-label="Fechar menu"
+        >
+          ✕
+        </button>
       </div>
 
-      <nav className="mt-4 px-2 flex flex-col gap-1 pb-6">
+      <nav className="mt-4 px-2 flex flex-col gap-1 pb-6 overflow-y-auto">
         {navItems.map((item, idx) => {
           const active = location.pathname === item.to;
           return (

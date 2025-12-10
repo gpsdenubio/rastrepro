@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { createDevice, updateDevice, updateDeviceAttributes } from "../services/traccar";
+import { createDevice, updateDevice } from "../services/traccar";
 
 const categories = [
   { value: "car", label: "Carro" },
@@ -76,31 +76,30 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
           ? Number(form.odometerKm) * 1000
           : undefined;
       const payload = {
-        ...form,
         id: device?.id,
-        groupId: device?.groupId,
-        calendarId: device?.calendarId,
+        name: form.name,
+        uniqueId: form.uniqueId,
+        model: form.model,
+        category: form.category,
+        phone: form.phone,
+        groupId: device?.groupId ?? null,
+        calendarId: device?.calendarId ?? null,
         attributes: {
           ...(device?.attributes || {}),
+          modelo: form.model || device?.attributes?.modelo || "",
+          placa: form.plate || device?.attributes?.placa || "",
+          linha: form.phone || device?.attributes?.linha || "",
+          ...(odometerMeters !== undefined
+            ? {
+                odometer: odometerMeters,
+                odometerBase: odometerMeters,
+                totalDistance: odometerMeters,
+              }
+            : {}),
         },
       };
       if (isEdit) {
-        if (odometerMeters !== undefined) {
-          const attrs = {
-            ...(device?.attributes || {}),
-            odometer: odometerMeters,
-            odometerBase: odometerMeters,
-          };
-          await updateDeviceAttributes({
-            id: device.id,
-            name: device.name,
-            uniqueId: device.uniqueId,
-            category: device.category,
-            attributes: attrs,
-          });
-        } else {
-          await updateDevice(device.id, payload);
-        }
+        await updateDevice(device.id, payload);
       } else {
         await createDevice(payload);
       }

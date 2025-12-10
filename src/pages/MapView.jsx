@@ -29,6 +29,11 @@ const isCoordLike = (addr) =>
   typeof addr === "string" &&
   /^-?\d+(\.\d+)?\s*[,; ]\s*-?\d+(\.\d+)?$/.test(addr.trim());
 
+const buildCoordKey = (lat, lon) => {
+  if (lat == null || lon == null || Number.isNaN(lat) || Number.isNaN(lon)) return null;
+  return `${Number(lat).toFixed(5)},${Number(lon).toFixed(5)}`;
+};
+
 function FitMapView({ positions, lastInteractionRef }) {
   const map = useMap();
   const [hasFitted, setHasFitted] = useState(false);
@@ -67,6 +72,7 @@ export default function MapView({ onSelectDevice, height }) {
   const lastInteractionRef = useRef(0);
   const batteryCacheRef = useRef({});
   const addressCacheRef = useRef({});
+  const geocodedKeyRef = useRef({});
   const geocodeInFlightRef = useRef(new Set());
   const ignitionDisplayRef = useRef({});
   const batteryDisplayRef = useRef({});
@@ -186,24 +192,30 @@ export default function MapView({ onSelectDevice, height }) {
         cache[String(d.id)] = d.address;
       }
     });
-    const isCoordLike = (addr) =>
-      typeof addr === "string" &&
-      /^-?\d+(\.\d+)?\s*[,; ]\s*-?\d+(\.\d+)?$/.test(addr.trim());
     const posWithAddress = pos.map((p) => {
+      const coordKey = buildCoordKey(p.latitude, p.longitude);
+      const keyId = p.deviceId ?? p.id;
+      const lastCoordKey = keyId != null ? geocodedKeyRef.current[keyId] : null;
       const incomingAddr =
         p.address ||
         p.attributes?.address ||
         p.attributes?.formattedAddress ||
         "";
-      const hasAddr = Boolean(incomingAddr) && !isCoordLike(incomingAddr);
-      const addr =
-        incomingAddr ||
+      const cachedAddr =
         cache[String(p.deviceId)] ||
-        cache[String(p.id)];
-      if (addr) {
-        cache[String(p.deviceId || p.id)] = addr;
+        cache[String(p.id)] ||
+        "";
+      const chosenAddr = incomingAddr || cachedAddr;
+      const hasReadableAddr = Boolean(chosenAddr) && !isCoordLike(chosenAddr);
+      if (chosenAddr) {
+        cache[String(p.deviceId || p.id)] = chosenAddr;
       }
-      return { ...p, address: addr || p.address, needsGeocode: !hasAddr };
+      if (hasReadableAddr && coordKey && keyId != null) {
+        geocodedKeyRef.current[keyId] = coordKey;
+      }
+      const needsGeocode =
+        coordKey && !hasReadableAddr && coordKey !== lastCoordKey;
+      return { ...p, address: chosenAddr || p.address, needsGeocode: Boolean(needsGeocode) };
     });
     addressCacheRef.current = cache;
     setPositions(posWithAddress);
@@ -249,10 +261,21 @@ export default function MapView({ onSelectDevice, height }) {
     const fillAddresses = async () => {
       const missing = positions.filter(
         (p) =>
-          (!p.address || p.needsGeocode || isCoordLike(p.address || "")) &&
-          p.latitude != null &&
-          p.longitude != null &&
-          !geocodeInFlightRef.current.has(p.deviceId)
+          (() => {
+            const coordKey = buildCoordKey(p.latitude, p.longitude);
+            if (!coordKey) return false;
+            const lastKey = geocodedKeyRef.current[p.deviceId ?? p.id];
+            const hasReadableAddr = Boolean(p.address) && !isCoordLike(p.address || "");
+            const shouldGeocode =
+              (!hasReadableAddr || p.needsGeocode || isCoordLike(p.address || "")) &&
+              coordKey !== lastKey;
+            return (
+              shouldGeocode &&
+              p.latitude != null &&
+              p.longitude != null &&
+              !geocodeInFlightRef.current.has(p.deviceId)
+            );
+          })()
       );
       if (!missing.length) return;
       missing.forEach((p) => {
@@ -261,7 +284,12 @@ export default function MapView({ onSelectDevice, height }) {
       const updates = await Promise.all(
         missing.map(async (p) => {
           const addr = await getAddressFromTraccar(p.latitude, p.longitude);
-          return { id: p.id, deviceId: p.deviceId, address: addr };
+          return {
+            id: p.id,
+            deviceId: p.deviceId,
+            address: addr,
+            coordKey: buildCoordKey(p.latitude, p.longitude),
+          };
         })
       );
       setPositions((prev) => {
@@ -272,8 +300,16 @@ export default function MapView({ onSelectDevice, height }) {
           );
           if (found && found.address) {
             cache[String(pos.deviceId || pos.id)] = found.address;
+            if (found.coordKey && (pos.deviceId || pos.id)) {
+              geocodedKeyRef.current[pos.deviceId || pos.id] = found.coordKey;
+            }
             if (pos?.deviceId != null) geocodeInFlightRef.current.delete(pos.deviceId);
             return { ...pos, address: found.address, needsGeocode: false };
+          }
+          if (found?.coordKey && (pos.deviceId || pos.id)) {
+            geocodedKeyRef.current[pos.deviceId || pos.id] = found.coordKey;
+            if (pos?.deviceId != null) geocodeInFlightRef.current.delete(pos.deviceId);
+            return { ...pos, needsGeocode: false };
           }
           return pos;
         });
@@ -508,28 +544,29 @@ export default function MapView({ onSelectDevice, height }) {
         const currentTime = current?.deviceTime ? new Date(current.deviceTime).getTime() : 0;
         const newTime = p.deviceTime ? new Date(p.deviceTime).getTime() : 0;
         if (!current || newTime >= currentTime) {
-          const hasAddr = Boolean(
-            p.address ||
-            p.attributes?.address ||
-            p.attributes?.formattedAddress
-          ) && !isCoordLike(
-            p.address ||
-              p.attributes?.address ||
-              p.attributes?.formattedAddress ||
-              ""
-          );
           const cachedAddr = cache[String(p.deviceId)];
+          const coordKey = buildCoordKey(p.latitude, p.longitude);
+          const lastCoordKey = geocodedKeyRef.current[p.deviceId];
           const addr =
             p.address ||
             p.attributes?.address ||
             p.attributes?.formattedAddress ||
             cachedAddr;
           if (addr) cache[String(p.deviceId)] = addr;
+          const hasReadableAddr = Boolean(addr) && !isCoordLike(
+            addr ||
+              ""
+          );
+          if (hasReadableAddr && coordKey) {
+            geocodedKeyRef.current[p.deviceId] = coordKey;
+          }
+          const needsGeocode =
+            coordKey && !hasReadableAddr && coordKey !== lastCoordKey;
           byDevice.set(p.deviceId, {
             ...current,
             ...p,
             address: addr || p.address,
-            needsGeocode: !hasAddr,
+            needsGeocode: Boolean(needsGeocode),
           });
         }
       });

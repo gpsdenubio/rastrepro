@@ -1,5 +1,5 @@
 // src/pages/Drivers.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   getDrivers,
   createDriver,
@@ -133,16 +133,43 @@ export default function Drivers() {
   const { can } = useAuth();
   const canView = can("drivers.view");
   const canManage = can("drivers.manage");
-  const [drivers, setDrivers] = useState([]);
-  const [devices, setDevices] = useState([]);
+  const [drivers, setDrivers] = useState(() => {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("cache:drivers");
+      if (stored) {
+        try {
+          return JSON.parse(stored);
+        } catch {
+          return [];
+        }
+      }
+    }
+    return [];
+  });
+  const [devices, setDevices] = useState(() => {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("cache:devices");
+      if (stored) {
+        try {
+          return JSON.parse(stored);
+        } catch {
+          return [];
+        }
+      }
+    }
+    return [];
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedDriver, setSelectedDriver] = useState(null);
   const [savingAssignment, setSavingAssignment] = useState(null);
+  const firstLoadDoneRef = useRef(false);
 
   const loadData = async () => {
-    setLoading(true);
+    const shouldShowLoading =
+      !firstLoadDoneRef.current && drivers.length === 0 && devices.length === 0;
+    if (shouldShowLoading) setLoading(true);
     setError("");
     try {
       const [drvList, devList, perms] = await Promise.all([
@@ -178,6 +205,7 @@ export default function Drivers() {
       setError("Não foi possível carregar motoristas.");
     } finally {
       setLoading(false);
+      firstLoadDoneRef.current = true;
     }
   };
 
@@ -185,6 +213,18 @@ export default function Drivers() {
     if (!canView) return;
     loadData();
   }, [canView]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("cache:drivers", JSON.stringify(drivers));
+    }
+  }, [drivers]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("cache:devices", JSON.stringify(devices));
+    }
+  }, [devices]);
 
   const assignmentsByDriver = useMemo(() => {
     const map = {};
@@ -287,13 +327,7 @@ export default function Drivers() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
-              {loading ? (
-                <tr>
-                  <td colSpan={6} className="px-4 py-4 text-slate-400">
-                    Carregando...
-                  </td>
-                </tr>
-              ) : drivers.length === 0 ? (
+              {drivers.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-4 py-4 text-slate-400">
                     Nenhum motorista cadastrado.

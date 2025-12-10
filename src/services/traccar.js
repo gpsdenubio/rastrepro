@@ -149,6 +149,8 @@ export async function createDevice(data) {
     model: data.model,
     category: data.category,
     phone: data.phone,
+    contact: data.contact,
+    groupId: data.groupId ?? null,
     attributes: {
       modelo: data.model,
       placa: data.plate,

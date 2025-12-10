@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { getAuditLogs } from "../services/traccar";
 import { useAuth } from "../context/AuthContext";
 import { useEventSocket } from "../hooks/useEventSocket";
@@ -133,12 +133,25 @@ const mapEntry = (item, idx) => {
 
 export function AuditContent({ embedded = false }) {
   const { authHeader } = useAuth();
-  const [rows, setRows] = useState([]);
+  const [rows, setRows] = useState(() => {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("cache:audit");
+      if (stored) {
+        try {
+          return JSON.parse(stored);
+        } catch {
+          return [];
+        }
+      }
+    }
+    return [];
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [range, setRange] = useState("today");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
+  const firstLoadDoneRef = useRef(false);
 
   const { from, to } = useMemo(() => {
     if (range === "custom" && customFrom && customTo) {
@@ -148,7 +161,8 @@ export function AuditContent({ embedded = false }) {
   }, [range, customFrom, customTo]);
 
   const loadData = async () => {
-    setLoading(true);
+    const shouldShowLoading = !firstLoadDoneRef.current && rows.length === 0;
+    if (shouldShowLoading) setLoading(true);
     setError("");
     try {
       const params = {};
@@ -164,6 +178,7 @@ export function AuditContent({ embedded = false }) {
       setError("Não foi possível carregar auditoria.");
     } finally {
       setLoading(false);
+      firstLoadDoneRef.current = true;
     }
   };
 
@@ -171,6 +186,12 @@ export function AuditContent({ embedded = false }) {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range, customFrom, customTo]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("cache:audit", JSON.stringify(rows));
+    }
+  }, [rows]);
 
   useEventSocket({
     authHeader,
@@ -276,7 +297,6 @@ export function AuditContent({ embedded = false }) {
             </tbody>
           </table>
         </div>
-        {loading && <div className="px-4 py-3 text-sm text-slate-400">Carregando...</div>}
       </div>
     </div>
   );
