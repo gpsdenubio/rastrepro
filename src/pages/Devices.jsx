@@ -25,6 +25,7 @@ import {
   getDrivers,
   assignDriverToDevice,
   removeDriverFromDevice,
+  getPositions,
   updateDevice,
 } from "../services/traccar";
 import DeviceBlockActions from "../components/DeviceBlockActions";
@@ -97,18 +98,20 @@ export default function Devices() {
   const allowCreate = canCreate && (deviceLimit === 0 || devices.length < deviceLimit);
   const firstLoadDoneRef = useRef(false);
   const [expandedId, setExpandedId] = useState(null);
-  const photoInputsRef = useRef({});
-  const [photoLoading, setPhotoLoading] = useState(null);
 
   const loadDevices = useCallback(async () => {
     const shouldShowLoading = !firstLoadDoneRef.current && devices.length === 0;
     if (shouldShowLoading) setLoading(true);
     setError("");
     try {
-      const [list, drvList] = await Promise.all([
+      const [list, drvList, positions] = await Promise.all([
         getDevices(),
         getDrivers(),
+        getPositions().catch(() => []),
       ]);
+      const posByDevice = new Map(
+        (positions || []).map((p) => [p.deviceId, p])
+      );
       const driversMap = {};
       (Array.isArray(drvList) ? drvList : []).forEach((d) => {
         driversMap[d.id] = d;
@@ -121,6 +124,8 @@ export default function Devices() {
           driverId: driverId || null,
           driverName: driver?.name || d.driverName,
           driverUniqueId: driver?.uniqueId || d.driverUniqueId,
+          lastPosition: posByDevice.get(d.id) || d.lastPosition || null,
+          address: d.address || posByDevice.get(d.id)?.address || d.attributes?.address || d.attributes?.formattedAddress || d.address,
         };
       });
       setDevices(devicesWithDriver);
@@ -168,38 +173,6 @@ export default function Devices() {
     setDeleteOpen(true);
   };
 
-  const handlePhotoSelect = (deviceId) => {
-    const input = photoInputsRef.current[deviceId];
-    if (input) input.click();
-  };
-
-  const handlePhotoChange = async (device) => {
-    const input = photoInputsRef.current[device.id];
-    if (!input || !input.files || !input.files[0]) return;
-    const file = input.files[0];
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64 = reader.result;
-      setPhotoLoading(device.id);
-      try {
-        const updated = await updateDevice(device.id, {
-          ...device,
-          attributes: {
-            ...(device.attributes || {}),
-            photoUrl: base64,
-          },
-        });
-        setDevices((prev) => prev.map((d) => (d.id === device.id ? updated : d)));
-      } catch (err) {
-        console.warn("Erro ao atualizar foto:", err);
-      } finally {
-        setPhotoLoading(null);
-        input.value = "";
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
   const tableRows = useMemo(() => {
     return devices.map((d) => ({
       ...d,
@@ -242,59 +215,117 @@ export default function Devices() {
   };
 
   const buildPositionAttributes = (d) => {
-    const get = (key) => d?.[key] ?? d?.attributes?.[key];
-    const label = (key) =>
-      ({
-        id: "Identificador",
-        deviceId: "ID do Dispositivo",
-        protocol: "Protocolo",
-        serverTime: "Hora do Servidor",
-        deviceTime: "Hora do Dispositivo",
-        fixTime: "Hora GPS",
-        valid: "Válido",
-        latitude: "Latitude",
-        longitude: "Longitude",
-        altitude: "Altitude",
-        speed: "Velocidade",
-        course: "Direção",
-        address: "Endereço",
-        accuracy: "Precisão",
-        network: "Rede",
-        geofenceIds: "Cercas Virtuais",
-        adc1: "ADC1",
-        distance: "Distância",
-        totalDistance: "Distância Total",
-        motion: "Movimento",
-        hours: "Horas",
-      }[key] || key);
-    const entries = [
-      { key: "id", label: label("id"), icon: <Hash size={16} />, value: get("positionId") ?? get("id") },
-      { key: "deviceId", label: label("deviceId"), icon: <Hash size={16} />, value: d?.deviceId ?? d?.id },
-      { key: "protocol", label: label("protocol"), icon: <Satellite size={16} />, value: get("protocol") },
-      { key: "serverTime", label: label("serverTime"), icon: <Clock3 size={16} />, value: get("serverTime") },
-      { key: "deviceTime", label: label("deviceTime"), icon: <Clock3 size={16} />, value: get("deviceTime") },
-      { key: "fixTime", label: label("fixTime"), icon: <Clock3 size={16} />, value: get("fixTime") },
-      { key: "valid", label: label("valid"), icon: <Activity size={16} />, value: get("valid") },
-      { key: "latitude", label: label("latitude"), icon: <MapPin size={16} />, value: get("latitude") },
+    const pos = d?.lastPosition || d;
+    const get = (key) => pos?.[key] ?? pos?.attributes?.[key];
+  const label = (key) =>
+    ({
+      id: "Identificador",
+      deviceId: "ID do Dispositivo",
+      protocol: "Protocolo",
+      serverTime: "Hora do Servidor",
+      deviceTime: "Hora do Dispositivo",
+      fixTime: "Hora GPS",
+      valid: "Válido",
+      latitude: "Latitude",
+      longitude: "Longitude",
+      altitude: "Altitude",
+      speed: "Velocidade",
+      course: "Direção",
+      accuracy: "Precisão",
+      network: "Rede",
+      geofenceIds: "Cerca Virtual",
+      adc1: "ADC1",
+      distance: "Distância",
+      totalDistance: "Distância Total",
+      motion: "Movimento",
+      hours: "Horas",
+    }[key] || key);
+  const formatTime = (val) => {
+    if (!val) return null;
+    const dte = new Date(val);
+    if (Number.isNaN(dte.getTime())) return val;
+    return new Intl.DateTimeFormat("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      dateStyle: "short",
+      timeStyle: "medium",
+    }).format(dte);
+  };
+
+  const formatHours = (val) => {
+    if (!Number.isFinite(Number(val))) return val;
+    const num = Number(val);
+    // Se vier em milissegundos ou segundos, converte para horas.
+    if (num > 1e6) return (num / 3600000).toFixed(2); // ms -> horas
+    if (num > 1e3) return (num / 3600).toFixed(2); // segundos -> horas
+    return num;
+  };
+
+  const formatDistanceVal = (val) => {
+    if (!Number.isFinite(Number(val))) return val;
+    const num = Number(val);
+    return `${(num / 1000).toFixed(2)} km`;
+  };
+
+  const formatMotion = (val) => {
+    if (val === true || val === "true" || val === 1) return "Sim";
+    if (val === false || val === "false" || val === 0) return "Não";
+    return val;
+  };
+
+  const formatValid = (val) => {
+    if (val === true || val === "true" || val === 1) return "Sim";
+    if (val === false || val === "false" || val === 0) return "Não";
+    return val;
+  };
+
+  const entries = [
+    { key: "id", label: label("id"), icon: <Hash size={16} />, value: get("id") ?? get("positionId") },
+    { key: "deviceId", label: label("deviceId"), icon: <Hash size={16} />, value: get("deviceId") ?? d?.id },
+    { key: "protocol", label: label("protocol"), icon: <Satellite size={16} />, value: get("protocol") },
+    { key: "fixTime", label: label("fixTime"), icon: <Clock3 size={16} />, value: formatTime(get("fixTime")) },
+    { key: "valid", label: label("valid"), icon: <Activity size={16} />, value: formatValid(get("valid")) },
+    { key: "latitude", label: label("latitude"), icon: <MapPin size={16} />, value: get("latitude") },
       { key: "longitude", label: label("longitude"), icon: <MapPin size={16} />, value: get("longitude") },
-      { key: "altitude", label: label("altitude"), icon: <Ruler size={16} />, value: get("altitude") },
-      { key: "speed", label: label("speed"), icon: <Gauge size={16} />, value: get("speed") },
-      { key: "course", label: label("course"), icon: <Navigation2 size={16} />, value: get("course") },
-      { key: "accuracy", label: label("accuracy"), icon: <Ruler size={16} />, value: get("accuracy") },
-      { key: "network", label: label("network"), icon: <Network size={16} />, value: get("network") },
-      { key: "geofenceIds", label: label("geofenceIds"), icon: <Hash size={16} />, value: (() => {
+    { key: "altitude", label: label("altitude"), icon: <Ruler size={16} />, value: get("altitude") },
+    { key: "speed", label: label("speed"), icon: <Gauge size={16} />, value: get("speed") },
+    { key: "course", label: label("course"), icon: <Navigation2 size={16} />, value: get("course") },
+    { key: "accuracy", label: label("accuracy"), icon: <Ruler size={16} />, value: get("accuracy") },
+    { key: "network", label: label("network"), icon: <Network size={16} />, value: get("network") },
+    {
+      key: "geofenceIds",
+      label: label("geofenceIds"),
+      icon: <Hash size={16} />,
+      value: (() => {
         const v = get("geofenceIds");
         if (Array.isArray(v)) return v.join(", ");
         return v;
-      })() },
-      { key: "adc1", label: label("adc1"), icon: <Battery size={16} />, value: get("adc1") ?? d?.attributes?.adc1 },
-      { key: "distance", label: label("distance"), icon: <Ruler size={16} />, value: get("distance") },
-      { key: "totalDistance", label: label("totalDistance"), icon: <Ruler size={16} />, value: get("totalDistance") },
-      { key: "motion", label: label("motion"), icon: <Activity size={16} />, value: get("motion") },
-      { key: "hours", label: label("hours"), icon: <Clock3 size={16} />, value: get("hours") },
-    ];
-    return entries.filter((e) => e.value !== undefined && e.value !== null && e.value !== "");
-  };
+      })(),
+    },
+    { key: "adc1", label: label("adc1"), icon: <Battery size={16} />, value: get("adc1") },
+    { key: "distance", label: label("distance"), icon: <Ruler size={16} />, value: formatDistanceVal(get("distance")) },
+    { key: "totalDistance", label: label("totalDistance"), icon: <Ruler size={16} />, value: formatDistanceVal(get("totalDistance")) },
+    { key: "motion", label: label("motion"), icon: <Activity size={16} />, value: formatMotion(get("motion")) },
+    { key: "hours", label: label("hours"), icon: <Clock3 size={16} />, value: formatHours(get("hours")) },
+  ];
+  const filtered = entries.filter((e) => e.value !== undefined && e.value !== null && e.value !== "");
+
+  const combined = [];
+  filtered.forEach((item) => {
+    if (item.key === "longitude") {
+      return;
+    }
+    if (item.key === "latitude") {
+      const lon = filtered.find((e) => e.key === "longitude");
+      combined.push({ ...item, combinedWith: lon });
+    } else {
+      combined.push(item);
+    }
+  });
+
+  return combined;
+};
+
+
 
   useEventSocket({
     authHeader,
@@ -314,7 +345,7 @@ export default function Devices() {
               latitude: p.latitude ?? current.latitude,
               longitude: p.longitude ?? current.longitude,
               address: p.address || current.address,
-              attributes: { ...(current.attributes || {}), ...(p.attributes || {}) },
+              lastPosition: p,
             });
           });
           return Array.from(byId.values());
@@ -420,8 +451,9 @@ export default function Devices() {
               </div>
             ) : (
               tableRows.map((d) => {
+                const lastPos = d.lastPosition || {};
                 const status = d.status || "unknown";
-                const moving = status === "online" && Number(d?.attributes?.speed || d?.speed) > 1;
+                const moving = status === "online" && Number(lastPos?.speed ?? d?.attributes?.speed ?? d?.speed) > 1;
                 const statusIcon =
                   status === "online"
                     ? <Activity size={18} className="text-emerald-400" />
@@ -430,9 +462,25 @@ export default function Devices() {
                     : <Power size={18} className="text-slate-300" />;
                 const vBatt = vehicleBatteryValue(d);
                 const dBatt = deviceBatteryValue(d);
-                const lastUpdate = formatDateTime(d.lastUpdate);
-                const speedVal = Number(d?.attributes?.speed ?? d?.speed);
-                const hasSpeed = Number.isFinite(speedVal) && speedVal > 0;
+                const fixTime =
+                  lastPos.fixTime ||
+                  lastPos.deviceTime ||
+                  lastPos.serverTime ||
+                  d.fixTime ||
+                  d.deviceTime ||
+                  d.serverTime ||
+                  d.lastUpdate;
+                const lastUpdate =
+                  fixTime && !Number.isNaN(new Date(fixTime).getTime())
+                    ? new Intl.DateTimeFormat("pt-BR", {
+                        timeZone: "America/Sao_Paulo",
+                        dateStyle: "short",
+                        timeStyle: "medium",
+                      }).format(new Date(fixTime))
+                    : null;
+                const speedVal = Number(lastPos?.speed ?? d?.speed ?? d?.attributes?.speed);
+                const hasSpeed = Number.isFinite(speedVal);
+                const protocol = lastPos?.protocol || d?.protocol;
                 const photoUrl = d?.attributes?.photoUrl;
                 const expanded = expandedId === d.id;
 
@@ -444,10 +492,9 @@ export default function Devices() {
                     <div className="flex items-center gap-3 p-4">
                       <button
                         type="button"
-                        onClick={() => handlePhotoSelect(d.id)}
-                        className="h-14 w-14 rounded-2xl overflow-hidden bg-slate-800 border border-slate-700 flex items-center justify-center relative"
+                        onClick={() => handleEdit(d)}
+                        className="h-14 w-14 rounded-2xl overflow-hidden bg-slate-800 border border-slate-700 flex items-center justify-center"
                         title="Trocar foto"
-                        disabled={photoLoading === d.id}
                       >
                         {photoUrl ? (
                           <img
@@ -461,18 +508,6 @@ export default function Devices() {
                             <span>Foto</span>
                           </div>
                         )}
-                        {photoLoading === d.id && (
-                          <div className="absolute inset-0 bg-black/50 grid place-items-center text-xs text-slate-200">Salvando...</div>
-                        )}
-                        <input
-                          type="file"
-                          accept="image/*"
-                          ref={(el) => {
-                            if (el) photoInputsRef.current[d.id] = el;
-                          }}
-                          onChange={() => handlePhotoChange(d)}
-                          className="hidden"
-                        />
                       </button>
 
                       <div className="flex-1 min-w-0">
@@ -496,6 +531,12 @@ export default function Devices() {
                             {statusIcon}
                             {moving && <span className="text-[10px] text-emerald-300">Movendo</span>}
                           </span>
+                          {protocol && (
+                            <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-slate-800 border border-slate-700">
+                              <Satellite size={16} className="text-slate-200" />
+                              <span className="font-semibold">{protocol}</span>
+                            </span>
+                          )}
                           {Number.isFinite(vBatt) && (
                             <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-slate-800 border border-slate-700">
                               <Car size={16} className="text-sky-300" />
@@ -508,7 +549,7 @@ export default function Devices() {
                               <span className="font-semibold">{Math.round(dBatt)}%</span>
                             </span>
                           )}
-                          {lastUpdate && lastUpdate !== "-" && (
+                          {lastUpdate && (
                             <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-slate-800 border border-slate-700">
                               <Clock3 size={16} className="text-amber-300" />
                               <span className="font-semibold">{lastUpdate}</span>
@@ -631,13 +672,26 @@ export default function Devices() {
                                 {attrs.map((item) => (
                                   <div
                                     key={item.key}
-                                    className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100"
+                                    className="flex items-start gap-2 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100"
                                   >
                                     <span className="text-sky-300">{item.icon}</span>
-                                    <div className="flex flex-col leading-tight">
-                                      <span className="text-[11px] uppercase tracking-wide text-slate-400">{item.label || item.key}</span>
-                                      <span className="text-sm break-all">{String(item.value)}</span>
-                                    </div>
+                                    {item.combinedWith ? (
+                                      <div className="flex-1 grid grid-cols-2 gap-2 leading-tight">
+                                        <div className="flex flex-col">
+                                          <span className="text-[11px] uppercase tracking-wide text-slate-400">{item.label || item.key}</span>
+                                          <span className="text-sm break-all">{String(item.value)}</span>
+                                        </div>
+                                        <div className="flex flex-col">
+                                          <span className="text-[11px] uppercase tracking-wide text-slate-400">{item.combinedWith.label || item.combinedWith.key}</span>
+                                          <span className="text-sm break-all">{String(item.combinedWith.value ?? "")}</span>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="flex flex-col leading-tight">
+                                        <span className="text-[11px] uppercase tracking-wide text-slate-400">{item.label || item.key}</span>
+                                        <span className="text-sm break-all">{String(item.value)}</span>
+                                      </div>
+                                    )}
                                   </div>
                                 ))}
                               </div>

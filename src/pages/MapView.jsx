@@ -421,6 +421,8 @@ export default function MapView({ onSelectDevice, height }) {
       url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
       attribution: "&copy; OpenStreetMap",
       subdomains: ["a", "b", "c"],
+      maxNativeZoom: 19,
+      maxZoom: 22,
     },
     {
       id: "carto",
@@ -428,6 +430,8 @@ export default function MapView({ onSelectDevice, height }) {
       url: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
       attribution: "&copy; CartoDB",
       subdomains: ["a", "b", "c", "d"],
+      maxNativeZoom: 20,
+      maxZoom: 22,
     },
     {
       id: "google-maps",
@@ -435,6 +439,8 @@ export default function MapView({ onSelectDevice, height }) {
       url: "https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}",
       attribution: "&copy; Google",
       subdomains: ["0", "1", "2", "3"],
+      maxNativeZoom: 20,
+      maxZoom: 22,
     },
     {
       id: "google-road",
@@ -442,6 +448,8 @@ export default function MapView({ onSelectDevice, height }) {
       url: "https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}",
       attribution: "&copy; Google",
       subdomains: ["0", "1", "2", "3"],
+      maxNativeZoom: 20,
+      maxZoom: 22,
     },
     {
       id: "google-sat",
@@ -449,6 +457,8 @@ export default function MapView({ onSelectDevice, height }) {
       url: "https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
       attribution: "&copy; Google",
       subdomains: ["0", "1", "2", "3"],
+      maxNativeZoom: 20,
+      maxZoom: 22,
     },
     {
       id: "google-hybrid",
@@ -456,6 +466,8 @@ export default function MapView({ onSelectDevice, height }) {
       url: "https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
       attribution: "&copy; Google",
       subdomains: ["0", "1", "2", "3"],
+      maxNativeZoom: 20,
+      maxZoom: 22,
     },
   ]), []);
 
@@ -631,6 +643,7 @@ export default function MapView({ onSelectDevice, height }) {
           <MapContainer
             center={[-22.84, -47.15]}
             zoom={10}
+            maxZoom={22}
             style={{ height: "100%", width: "100%" }}
             className="z-0"
           >
@@ -639,6 +652,8 @@ export default function MapView({ onSelectDevice, height }) {
               url={currentLayer.url}
               attribution={currentLayer.attribution}
               subdomains={currentLayer.subdomains}
+              maxZoom={currentLayer.maxZoom || 22}
+              maxNativeZoom={currentLayer.maxNativeZoom || 20}
             />
             <FitMapView positions={positions} lastInteractionRef={lastInteractionRef} />
 
@@ -678,7 +693,13 @@ export default function MapView({ onSelectDevice, height }) {
                 ignitionDisplayRef.current[d.id] = ignition;
               }
             const anchor = anchorStates[d.id];
-            const heading = p.course ?? p.attributes?.course ?? p.attributes?.bearing ?? 0;
+            const heading = Number(
+              p.course ??
+              p.attributes?.course ??
+              p.attributes?.bearing ??
+              p.attributes?.heading ??
+              0
+            );
             const type = (d.category || "").toLowerCase();
             const markerStatus = isOnline ? (speedVal > 1 ? "moving" : "online") : "offline";
             const addressDisplay =

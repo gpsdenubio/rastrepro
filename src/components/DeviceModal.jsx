@@ -24,6 +24,7 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
     plate: "",
     phone: "",
     odometerKm: "",
+    photoBase64: "",
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -47,6 +48,7 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
         plate: device.attributes?.placa || "",
         phone: device.attributes?.linha || device.phone || "",
         odometerKm: currentOdoKm,
+        photoBase64: device.attributes?.photoUrl || device.attributes?.photo || "",
       });
     } else {
       setForm({
@@ -57,6 +59,7 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
         plate: "",
         phone: "",
         odometerKm: "",
+        photoBase64: "",
       });
     }
     setError("");
@@ -66,11 +69,68 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
+  const resizeImageToBase64 = (file, onDone, onError) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        let maxSize = 140;
+        let { width, height } = img;
+        const scaleToFit = () => {
+          if (width > height && width > maxSize) {
+            height = Math.round((height * maxSize) / width);
+            width = maxSize;
+          } else if (height > width && height > maxSize) {
+            width = Math.round((width * maxSize) / height);
+            height = maxSize;
+          } else if (width > maxSize) {
+            width = maxSize;
+            height = maxSize;
+          }
+        };
+        scaleToFit();
+        let quality = 0.35;
+        let dataUrl = "";
+        const ctx = canvas.getContext("2d");
+        const render = () => {
+          canvas.width = width;
+          canvas.height = height;
+          ctx.clearRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+          dataUrl = canvas.toDataURL("image/jpeg", quality);
+        };
+        render();
+        // Reduz até caber no limite aproximado de 2600 caracteres (varchar 4000)
+        while (dataUrl.length > 2600 && (quality > 0.2 || maxSize > 100)) {
+          quality = Math.max(0.2, quality - 0.05);
+          if (quality <= 0.22 && maxSize > 100) {
+            maxSize = Math.max(100, Math.floor(maxSize * 0.85));
+            width = img.width;
+            height = img.height;
+            scaleToFit();
+          }
+          render();
+        }
+        onDone(dataUrl);
+      };
+      img.onerror = onError;
+      img.src = reader.result;
+    };
+    reader.onerror = onError;
+    reader.readAsDataURL(file);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSaving(true);
     setError("");
     try {
+      if (form.photoBase64 && form.photoBase64.length > 3000) {
+        setError("Imagem muito grande para salvar (limite ~3000 chars). Escolha uma menor.");
+        setSaving(false);
+        return;
+      }
       const odometerMeters =
         form.odometerKm !== "" && !Number.isNaN(Number(form.odometerKm))
           ? Number(form.odometerKm) * 1000
@@ -89,6 +149,12 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
           modelo: form.model || device?.attributes?.modelo || "",
           placa: form.plate || device?.attributes?.placa || "",
           linha: form.phone || device?.attributes?.linha || "",
+          ...(form.photoBase64
+            ? {
+                photoUrl: form.photoBase64,
+                photo: form.photoBase64,
+              }
+            : {}),
           ...(odometerMeters !== undefined
             ? {
                 odometer: odometerMeters,
@@ -106,7 +172,13 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
       onSaved();
       onClose();
     } catch (err) {
-      const msg = err?.response?.data || err?.message || "Erro ao salvar";
+      const serverMsg = err?.response?.data?.message || err?.response?.data;
+      const isTooLong =
+        typeof serverMsg === "string" &&
+        serverMsg.toLowerCase().includes("value too long");
+      const msg = isTooLong
+        ? "Imagem muito grande para salvar (limite do servidor). Por favor, escolha uma imagem menor."
+        : serverMsg || err?.message || "Erro ao salvar";
       setError(typeof msg === "string" ? msg : JSON.stringify(msg));
     } finally {
       setSaving(false);
@@ -145,11 +217,11 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
           <form onSubmit={handleSubmit} className="space-y-4">
             <section className="rounded-2xl border border-slate-800 bg-slate-900 shadow-[0_10px_30px_rgba(0,0,0,0.45)] p-4 space-y-3">
               <h3 className="text-sm font-semibold text-slate-100">Informações gerais</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <label className="flex flex-col text-sm">
-                  Nome
-                  <input
-                    value={form.name}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="flex flex-col text-sm">
+                Nome
+                <input
+                  value={form.name}
                     onChange={(e) => handleChange("name", e.target.value)}
                     className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
                     required
@@ -199,13 +271,50 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
                   />
                 </label>
                 <label className="flex flex-col text-sm">
-                  Linha telefônica
+                Linha telefônica
+                <input
+                  value={form.phone}
+                  onChange={(e) => handleChange("phone", e.target.value)}
+                  className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
+                />
+              </label>
+              <label className="flex flex-col text-sm">
+                Foto
+                <div className="mt-1 flex items-center gap-3">
+                  <div className="h-14 w-14 rounded-2xl overflow-hidden bg-slate-800 border border-slate-700 flex items-center justify-center">
+                    {form.photoBase64 ? (
+                      <img src={form.photoBase64} alt="Foto" className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="text-slate-400 text-xs">Sem foto</span>
+                    )}
+                  </div>
                   <input
-                    value={form.phone}
-                    onChange={(e) => handleChange("phone", e.target.value)}
-                    className="mt-1 border border-slate-700 bg-slate-800 text-slate-100 rounded-[10px] px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500/60"
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      resizeImageToBase64(
+                        file,
+                        (dataUrl) => {
+                          if (!dataUrl || dataUrl.length > 3000) {
+                            setError("Imagem muito grande. Por favor, escolha uma imagem menor (<= 3000 caracteres).");
+                            return;
+                          }
+                          setForm((prev) => ({ ...prev, photoBase64: dataUrl }));
+                        },
+                        () => setError("Não foi possível ler a imagem.")
+                      );
+                    }}
+                    className="text-xs text-slate-200"
                   />
-                </label>
+                  {form.photoBase64 && form.photoBase64.length > 2800 && (
+                    <div className="text-[11px] text-amber-300">
+                      Imagem comprimida; se falhar ao salvar, tente uma foto menor.
+                    </div>
+                  )}
+                </div>
+              </label>
                 <label className="flex flex-col text-sm">
                   Odômetro (km)
                   <input
