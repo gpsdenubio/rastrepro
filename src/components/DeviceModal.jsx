@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { createDevice, updateDevice } from "../services/traccar";
+import { deleteDevicePhoto, getDevicePhoto, saveDevicePhoto } from "../services/devicePhotos";
 
 const categories = [
   { value: "car", label: "Carro" },
@@ -48,7 +49,7 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
         plate: device.attributes?.placa || "",
         phone: device.attributes?.linha || device.phone || "",
         odometerKm: currentOdoKm,
-        photoBase64: device.attributes?.photoUrl || device.attributes?.photo || "",
+        photoBase64: getDevicePhoto(device.id, device.uniqueId),
       });
     } else {
       setForm({
@@ -126,8 +127,9 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
     setSaving(true);
     setError("");
     try {
-      if (form.photoBase64 && form.photoBase64.length > 3000) {
-        setError("Imagem muito grande para salvar (limite ~3000 chars). Escolha uma menor.");
+      const photoPayload = form.photoBase64 || "";
+      if (photoPayload && photoPayload.length > 250_000) {
+        setError("Imagem muito grande para armazenar localmente. Escolha uma menor.");
         setSaving(false);
         return;
       }
@@ -149,12 +151,6 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
           modelo: form.model || device?.attributes?.modelo || "",
           placa: form.plate || device?.attributes?.placa || "",
           linha: form.phone || device?.attributes?.linha || "",
-          ...(form.photoBase64
-            ? {
-                photoUrl: form.photoBase64,
-                photo: form.photoBase64,
-              }
-            : {}),
           ...(odometerMeters !== undefined
             ? {
                 odometer: odometerMeters,
@@ -164,10 +160,17 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
             : {}),
         },
       };
-      if (isEdit) {
-        await updateDevice(device.id, payload);
-      } else {
-        await createDevice(payload);
+      const savedDevice = isEdit
+        ? await updateDevice(device.id, payload)
+        : await createDevice(payload);
+
+      if (photoPayload) {
+        saveDevicePhoto(
+          { id: savedDevice?.id ?? device?.id, uniqueId: form.uniqueId || savedDevice?.uniqueId },
+          photoPayload
+        );
+      } else if (isEdit) {
+        deleteDevicePhoto(device?.id, device?.uniqueId);
       }
       onSaved();
       onClose();
@@ -297,8 +300,12 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
                       resizeImageToBase64(
                         file,
                         (dataUrl) => {
-                          if (!dataUrl || dataUrl.length > 3000) {
-                            setError("Imagem muito grande. Por favor, escolha uma imagem menor (<= 3000 caracteres).");
+                          if (!dataUrl) {
+                            setError("Não foi possível converter a imagem.");
+                            return;
+                          }
+                          if (dataUrl.length > 250_000) {
+                            setError("Imagem muito grande para armazenar localmente. Escolha uma menor.");
                             return;
                           }
                           setForm((prev) => ({ ...prev, photoBase64: dataUrl }));
@@ -308,9 +315,9 @@ export default function DeviceModal({ open, onClose, onSaved, device }) {
                     }}
                     className="text-xs text-slate-200"
                   />
-                  {form.photoBase64 && form.photoBase64.length > 2800 && (
+                  {form.photoBase64 && form.photoBase64.length > 200_000 && (
                     <div className="text-[11px] text-amber-300">
-                      Imagem comprimida; se falhar ao salvar, tente uma foto menor.
+                      Imagem grande; considere usar uma foto menor para caber no armazenamento local.
                     </div>
                   )}
                 </div>

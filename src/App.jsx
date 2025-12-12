@@ -19,7 +19,6 @@ const Logout = lazy(() => import("./pages/Logout"));
 const Audit = lazy(() => import("./pages/Audit"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Drivers = lazy(() => import("./pages/Drivers"));
-const Notifications = lazy(() => import("./pages/Notifications"));
 const AddDevice = lazy(() => import("./pages/AddDevice"));
 
 import MainLayout from "./layouts/MainLayout";
@@ -112,7 +111,6 @@ export default function App() {
               <Route path="/devices/new" element={<AddDevice />} />
               <Route path="/users" element={<Users />} />
               <Route path="/drivers" element={<Drivers />} />
-              <Route path="/notifications" element={<Notifications />} />
               <Route path="/reports" element={<Reports />} />
               <Route path="/map" element={<MapView />} />
               <Route path="/alerts" element={<Alerts />} />

@@ -142,6 +142,41 @@ body {
 .rv-status-dot.dot-blocked { background: #e74c3c; }
 .rv-status-dot.dot-unknown { background: #94a3b8; }
 
+.leaflet-top.leaflet-left {
+  top: auto;
+  bottom: 12px;
+  left: 12px;
+}
+.leaflet-control-zoom {
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.35);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.leaflet-control-zoom a {
+  width: 28px;
+  height: 28px;
+  line-height: 28px;
+  font-size: 14px;
+}
+
+/* Limpa fundo padrão do popup para usar o card customizado */
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip,
+.leaflet-popup {
+  background: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
+  padding: 0 !important;
+}
+.leaflet-popup-content {
+  margin: 0 !important;
+  padding: 0 !important;
+  width: auto !important;
+}
+.leaflet-popup-close-button {
+  display: none !important;
+}
+
 .led-banner {
   position: relative;
   width: min(880px, 96%);

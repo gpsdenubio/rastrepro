@@ -65,28 +65,33 @@ export default function Notifications() {
     setModalOpen(true);
   };
 
-  const handleDelete = (id) => {
+  const handleDelete = async (id) => {
     if (!window.confirm("Excluir esta notificação?")) return;
     const next = rules.filter((r) => r.id !== id);
     setRules(next);
-    void deleteNotificationRule(id);
-    saveNotificationRules(next, user?.id);
+    await deleteNotificationRule(id);
+    const saved = await saveNotificationRules(next, user?.id);
+    setRules(Array.isArray(saved) && saved.length ? saved : next);
   };
 
-  const handleToggle = (id) => {
+  const handleToggle = async (id) => {
     const next = rules.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r));
     setRules(next);
-    saveNotificationRules(next, user?.id);
+    const saved = await saveNotificationRules(next, user?.id);
+    setRules(Array.isArray(saved) && saved.length ? saved : next);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     const id = form.id || crypto.randomUUID();
     const nextRules = form.id
       ? rules.map((r) => (r.id === form.id ? { ...form, id } : r))
       : [...rules, { ...form, id }];
     setRules(nextRules);
-    saveNotificationRules(nextRules, user?.id);
+    const saved = await saveNotificationRules(nextRules, user?.id);
+    if (Array.isArray(saved) && saved.length) {
+      setRules(saved);
+    }
     setModalOpen(false);
   };
 
@@ -282,13 +287,13 @@ export default function Notifications() {
                 )}
               </div>
               <label className="flex flex-col gap-1 text-sm">
-                <span className="text-slate-300">Texto do alerta *</span>
+                <span className="text-slate-300">Texto do alerta (opcional)</span>
                 <textarea
                   name="message"
                   value={form.message}
                   onChange={handleChange}
-                  required
                   rows={3}
+                  placeholder="Deixe em branco para usar o texto automático do evento (tipo + dispositivo + endereço)"
                   className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 focus:outline-none focus:ring-1 focus:ring-sky-500 resize-none"
                 />
               </label>

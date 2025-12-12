@@ -76,7 +76,7 @@ export async function saveNotificationRules(rules, userId) {
       }
     }
     // remove órfãos: local storage serve de backup
-    saveNotificationRulesLocal(rules);
+    saveNotificationRulesLocal(saved);
     return saved;
   } catch (err) {
     console.warn("Falha ao salvar no Traccar, persistindo local:", err?.message);

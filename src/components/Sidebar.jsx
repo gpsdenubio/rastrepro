@@ -1,7 +1,7 @@
 // src/components/Sidebar.jsx
 import React from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { Home, MapPin, List, Bell, LogOut, Users, FileText, Settings, User, BellRing } from "lucide-react";
+import { Home, MapPin, List, Bell, LogOut, Users, FileText, Settings, User } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
 export default function Sidebar({ open, onClose }) {
@@ -15,7 +15,6 @@ export default function Sidebar({ open, onClose }) {
     { to: "/dashboard", label: "Dashboard", icon: <Home size={18} />, perm: "dashboard.view" },
     { to: "/users", label: "Usuários", icon: <Users size={18} />, perm: "users.manage" },
     { to: "/drivers", label: "Motoristas", icon: <User size={18} />, perm: "drivers.view" },
-    { to: "/notifications", label: "Notificações", icon: <BellRing size={18} />, perm: "notifications.view" },
     { to: "/devices", label: "Dispositivos", icon: <List size={18} />, perm: "devices.view" },
     { to: "/reports", label: "Relatórios", icon: <FileText size={18} />, perm: "reports.view" },
     { to: "/alerts", label: "Eventos", icon: <Bell size={18} />, perm: "alerts.view" },

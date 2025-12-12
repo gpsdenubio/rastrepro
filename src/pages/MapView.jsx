@@ -13,6 +13,23 @@ import {
 import RealisticVehicleMarker from "../components/RealisticVehicleMarker";
 import { useEventSocket } from "../hooks/useEventSocket";
 import { useAuth } from "../context/AuthContext";
+import {
+  Gauge,
+  Signal,
+  WifiOff,
+  HelpCircle,
+  Navigation2,
+  Layers,
+  MapPin as MapPinIcon,
+  Clock3,
+  User2,
+  Zap,
+  Battery as BatteryIcon,
+  Lock,
+  Unlock,
+  Anchor as AnchorIcon,
+  Globe2,
+} from "lucide-react";
 
 // corrigir ícone
 delete L.Icon.Default.prototype._getIconUrl;
@@ -76,6 +93,7 @@ export default function MapView({ onSelectDevice, height }) {
   const geocodeInFlightRef = useRef(new Set());
   const ignitionDisplayRef = useRef({});
   const batteryDisplayRef = useRef({});
+  const headingHistoryRef = useRef({});
   const setCachedAddress = (key, addr) => {
     if (!addr) return;
     const k = key != null ? String(key) : null;
@@ -452,6 +470,15 @@ export default function MapView({ onSelectDevice, height }) {
       maxZoom: 22,
     },
     {
+      id: "google-traffic",
+      name: "Google Tráfego",
+      url: "https://mt{s}.google.com/vt/lyrs=m@221097413,traffic&x={x}&y={y}&z={z}",
+      attribution: "&copy; Google",
+      subdomains: ["0", "1", "2", "3"],
+      maxNativeZoom: 20,
+      maxZoom: 22,
+    },
+    {
       id: "google-sat",
       name: "Google Satélite",
       url: "https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
@@ -491,11 +518,83 @@ export default function MapView({ onSelectDevice, height }) {
     [positions]
   );
 
+  const statusCards = useMemo(() => ([
+    {
+      label: "Total",
+      value: devices.length,
+      icon: <Gauge size={18} />,
+      accent: "from-slate-900/90 via-slate-900/60 to-slate-800/70",
+      dot: "bg-sky-300",
+    },
+    {
+      label: "Online",
+      value: onlineCount,
+      icon: <Signal size={18} />,
+      accent: "from-emerald-900/90 via-emerald-900/70 to-emerald-800/70",
+      dot: "bg-emerald-300",
+    },
+    {
+      label: "Offline",
+      value: offlineCount,
+      icon: <WifiOff size={18} />,
+      accent: "from-rose-900/90 via-rose-900/70 to-rose-800/70",
+      dot: "bg-rose-300",
+    },
+    {
+      label: "Desconhecido",
+      value: unknownCount,
+      icon: <HelpCircle size={18} />,
+      accent: "from-slate-900/90 via-slate-900/70 to-slate-800/70",
+      dot: "bg-slate-300",
+    },
+    {
+      label: "Movimento",
+      value: movingCount,
+      icon: <Navigation2 size={18} />,
+      accent: "from-sky-900/90 via-sky-900/70 to-cyan-800/70",
+      dot: "bg-sky-300",
+    },
+  ]), [devices.length, onlineCount, offlineCount, unknownCount, movingCount]);
+
   const formatSpeed = (rawSpeed) => {
     if (rawSpeed == null || Number.isNaN(Number(rawSpeed))) return "0 km/h";
     const kph = Number(rawSpeed) * 1.852;
     return `${kph.toFixed(1)} km/h`;
   };
+
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const bearingBetween = (a, b) => {
+    if (!a || !b) return null;
+    const lat1 = toRad(a.lat);
+    const lat2 = toRad(b.lat);
+    const dLon = toRad(b.lon - a.lon);
+    const y = Math.sin(dLon) * Math.cos(lat2);
+    const x =
+      Math.cos(lat1) * Math.sin(lat2) -
+      Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+    const brng = (Math.atan2(y, x) * 180) / Math.PI;
+    const norm = (brng + 360) % 360;
+    return Number.isFinite(norm) ? norm : null;
+  };
+
+  const updateHeadingHistory = useCallback((list = []) => {
+    list.forEach((pos) => {
+      const id = pos?.deviceId ?? pos?.id;
+      if (id == null || pos?.latitude == null || pos?.longitude == null) return;
+      const current = { lat: Number(pos.latitude), lon: Number(pos.longitude) };
+      const prevEntry = headingHistoryRef.current[id];
+      const last = prevEntry?.last;
+      const moved = last && (last.lat !== current.lat || last.lon !== current.lon);
+      headingHistoryRef.current[id] = {
+        prev: moved ? last : prevEntry?.prev,
+        last: current,
+      };
+    });
+  }, []);
+
+  useEffect(() => {
+    updateHeadingHistory(positions);
+  }, [positions, updateHeadingHistory]);
 
   const mapMatchPosition = async (pos) => {
     const lat = pos.latitude;
@@ -693,13 +792,26 @@ export default function MapView({ onSelectDevice, height }) {
                 ignitionDisplayRef.current[d.id] = ignition;
               }
             const anchor = anchorStates[d.id];
-            const heading = Number(
+            const rawHeading =
               p.course ??
               p.attributes?.course ??
               p.attributes?.bearing ??
               p.attributes?.heading ??
-              0
-            );
+              p.attributes?.direction ??
+              p.direction ??
+              p.heading ??
+              d?.attributes?.heading ??
+              d?.attributes?.direction ??
+              null;
+            const history = headingHistoryRef.current[d.id];
+            const derivedHeading = history?.prev && history?.last
+              ? bearingBetween(history.prev, history.last)
+              : null;
+            const heading = Number.isFinite(derivedHeading)
+              ? derivedHeading
+              : Number.isFinite(Number(rawHeading))
+              ? Number(rawHeading)
+              : 0;
             const type = (d.category || "").toLowerCase();
             const markerStatus = isOnline ? (speedVal > 1 ? "moving" : "online") : "offline";
             const addressDisplay =
@@ -799,58 +911,48 @@ export default function MapView({ onSelectDevice, height }) {
               onClick={() => onSelectDevice && onSelectDevice(d, p)}
               usePopup
             >
-              <div className="text-xs bg-slate-900/95 backdrop-blur-sm border border-slate-700 rounded-xl shadow-[0_10px_30px_rgba(0,0,0,0.45)] p-3 min-w-[220px] text-slate-100 space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="font-semibold truncate">{d.name || "Sem nome"}</div>
-                  <div className="flex items-center gap-2">
-                    <span
-                      title={isOnline ? "Online" : "Offline"}
-                      className="text-lg"
-                    >
-                      {isOnline ? "🟢" : "🔴"}
-                    </span>
-                    <span
-                      title="Bateria"
-                      className={`text-sm font-semibold px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 ${
-                        batteryLevel > 59
-                          ? "text-emerald-300"
-                          : batteryLevel > 29
-                          ? "text-yellow-300"
-                          : "text-red-300"
-                      }`}
-                    >
-                      {Number.isFinite(batteryLevel) || Number.isFinite(batteryDisplayRef.current[d.id]?.level)
-                        ? `${Math.round(Number.isFinite(batteryLevel) ? batteryLevel : batteryDisplayRef.current[d.id].level)}%`
-                        : "--"}
-                      {Number.isFinite(batteryVoltage) || Number.isFinite(batteryDisplayRef.current[d.id]?.voltage)
-                        ? ` • ${(
-                            Number.isFinite(batteryVoltage)
-                              ? batteryVoltage
-                              : batteryDisplayRef.current[d.id].voltage
-                          ).toFixed(1)}V`
-                        : ""}
-                    </span>
-                    <span
-                      title="Velocidade"
-                      className="text-sm font-semibold px-2 py-1 rounded-lg bg-slate-800 border border-slate-700"
-                    >
-                      {formatSpeed(p.speed)}
-                    </span>
+              <div className="relative overflow-hidden bg-slate-950 border border-slate-700/80 rounded-2xl shadow-[0_12px_26px_rgba(0,0,0,0.32)] p-2.5 min-w-[178px] text-slate-100 space-y-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold truncate">{d.name || "Sem nome"}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-300">
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] ${isOnline ? "border-emerald-500/60 text-emerald-200 bg-emerald-900/30" : "border-rose-500/60 text-rose-200 bg-rose-900/30"}`}>
+                        <span className="h-2 w-2 rounded-full bg-current" />
+                        {isOnline ? "Online" : "Offline"}
+                      </span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-slate-700 bg-slate-900/60 text-slate-200">
+                        <BatteryIcon size={12} />
+                        {Number.isFinite(batteryLevel) || Number.isFinite(batteryDisplayRef.current[d.id]?.level)
+                          ? `${Math.round(Number.isFinite(batteryLevel) ? batteryLevel : batteryDisplayRef.current[d.id].level)}%`
+                          : "--"}
+                        {Number.isFinite(batteryVoltage) || Number.isFinite(batteryDisplayRef.current[d.id]?.voltage)
+                          ? ` • ${(Number.isFinite(batteryVoltage) ? batteryVoltage : batteryDisplayRef.current[d.id].voltage).toFixed(1)}V`
+                          : ""}
+                      </span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-sky-500/50 bg-sky-900/30 text-sky-100">
+                        <Zap size={12} />
+                        {formatSpeed(p.speed)}
+                      </span>
+                    </div>
                   </div>
                 </div>
-                <div className="text-[11px] text-slate-300 flex items-center gap-1">
-                  <span>📍</span>
-                  <span className="truncate">{addressDisplay}</span>
+
+                <div className="space-y-2 text-[11px]">
+                  <div className="flex items-center gap-2 text-slate-200">
+                    <MapPinIcon size={13} className="text-sky-300 shrink-0" />
+                    <span className="truncate">{addressDisplay}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-slate-200">
+                    <User2 size={13} className="text-emerald-300 shrink-0" />
+                    <span className="truncate">{driverLabel || "-"}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-slate-400">
+                    <Clock3 size={13} className="text-slate-300 shrink-0" />
+                    <span>{p.deviceTime ? new Date(p.deviceTime).toLocaleString() : "-"}</span>
+                  </div>
                 </div>
-                <div className="text-[11px] text-slate-300 flex items-center gap-1">
-                  <span>👤</span>
-                  <span className="truncate">{driverLabel || "-"}</span>
-                </div>
-                <div className="text-[11px] text-slate-400 flex items-center gap-1">
-                  <span>🕒</span>
-                  <span>{p.deviceTime ? new Date(p.deviceTime).toLocaleString() : "-"}</span>
-                </div>
-                <div className="flex items-center gap-2">
+
+                <div className="grid grid-cols-5 gap-1.5">
                   <span
                     title={
                       ignition === true
@@ -859,15 +961,15 @@ export default function MapView({ onSelectDevice, height }) {
                         ? "Ignição desligada"
                         : "Ignição desconhecida"
                     }
-                    className={`h-9 w-9 text-lg rounded-lg border flex items-center justify-center ${
+                    className={`h-9 w-full text-lg rounded-xl border flex items-center justify-center shadow-inner ${
                       (ignition ?? ignitionDisplayRef.current[d.id]) === true
                         ? "text-emerald-300 border-emerald-500/60 bg-emerald-900/30"
                         : (ignition ?? ignitionDisplayRef.current[d.id]) === false
-                        ? "text-red-300 border-red-500/60 bg-red-900/30"
+                        ? "text-rose-300 border-rose-500/60 bg-rose-900/30"
                         : "text-slate-300 border-slate-600 bg-slate-800/60"
                     }`}
                   >
-                    🔑
+                    <Zap size={16} />
                   </span>
                   <button
                     title={anchor?.active ? "Desativar âncora" : "Ativar âncora"}
@@ -882,29 +984,29 @@ export default function MapView({ onSelectDevice, height }) {
                         setAnchorModal({ open: true, device: d, position: p });
                       }
                     }}
-                    className={`h-9 w-9 rounded-lg border text-lg flex items-center justify-center ${
+                    className={`h-9 w-full rounded-xl border flex items-center justify-center transition ${
                       anchor?.active
-                        ? "border-sky-500 text-sky-200 bg-sky-900/40"
-                        : "border-slate-600 text-slate-200 bg-slate-800/70"
+                        ? "border-sky-500 text-sky-200 bg-sky-900/30 hover:bg-sky-900/50"
+                        : "border-slate-600 text-slate-200 bg-slate-800/70 hover:bg-slate-800"
                     }`}
                   >
-                    ⚓
+                    <AnchorIcon size={16} />
                   </button>
                   <button
                     title="Bloquear"
                     onClick={handleBlock}
                     disabled={actionLoading === d.id}
-                    className="h-9 w-9 rounded-lg border border-red-500 text-red-200 bg-red-900/30 hover:bg-red-900/50 disabled:opacity-50 text-lg flex items-center justify-center"
+                    className="h-9 w-full rounded-xl border border-rose-500 text-rose-200 bg-rose-900/30 hover:bg-rose-900/50 disabled:opacity-50 flex items-center justify-center transition"
                   >
-                    🔒
+                    <Lock size={16} />
                   </button>
                   <button
                     title="Desbloquear"
                     onClick={handleUnblock}
                     disabled={actionLoading === d.id}
-                    className="h-9 w-9 rounded-lg border border-emerald-500 text-emerald-200 bg-emerald-900/30 hover:bg-emerald-900/50 disabled:opacity-50 text-lg flex items-center justify-center"
+                    className="h-9 w-full rounded-xl border border-emerald-500 text-emerald-200 bg-emerald-900/30 hover:bg-emerald-900/50 disabled:opacity-50 flex items-center justify-center transition"
                   >
-                    🔓
+                    <Unlock size={16} />
                   </button>
                   <button
                     title="Ver foto da rua"
@@ -912,9 +1014,9 @@ export default function MapView({ onSelectDevice, height }) {
                       e.stopPropagation();
                       openStreetViewInside(p.latitude, p.longitude);
                     }}
-                    className="h-9 w-9 rounded-lg border border-sky-500 text-sky-200 bg-sky-900/30 hover:bg-sky-900/50 text-lg flex items-center justify-center"
+                    className="h-9 w-full rounded-xl border border-sky-500 text-sky-200 bg-sky-900/30 hover:bg-sky-900/50 flex items-center justify-center transition"
                   >
-                    🌐
+                    <Globe2 size={16} />
                   </button>
                 </div>
               </div>
@@ -923,13 +1025,44 @@ export default function MapView({ onSelectDevice, height }) {
         })}
         </MapContainer>
 
-        <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-2 pointer-events-none">
-          <div className="shadow-lg rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-left w-[96px] pointer-events-auto">
-            <div className="text-[9px] uppercase tracking-wide text-slate-300 leading-none mb-1">Mapa</div>
+        <div className="absolute top-4 left-4 z-[1000] flex flex-col gap-1 pointer-events-none">
+          {statusCards.map((card) => (
+            <div
+              key={card.label}
+              className={`pointer-events-auto relative overflow-hidden rounded-2xl border border-slate-700/70 bg-gradient-to-br ${card.accent} backdrop-blur-md shadow-[0_6px_14px_rgba(0,0,0,0.22)] px-1.5 py-1 w-[78px] transition transform hover:translate-x-0.5 hover:-translate-y-0.5 hover:shadow-[0_10px_18px_rgba(56,189,248,0.12)]`}
+              title={card.label}
+            >
+              <div className="absolute inset-0 bg-gradient-to-tr from-white/4 to-transparent pointer-events-none" />
+              <div className="flex items-center gap-2">
+                <div className="h-6 w-6 rounded-lg bg-slate-800/70 border border-slate-600/70 grid place-items-center text-slate-100 shadow-inner text-[10px]">
+                  {card.icon}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-white leading-tight text-right">{card.value}</div>
+                </div>
+                <span className={`h-2.5 w-2.5 rounded-full ${card.dot} shadow-[0_0_8px_rgba(255,255,255,0.28)]`} />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="absolute top-4 right-4 z-[1000] pointer-events-none">
+          <div className="pointer-events-auto relative overflow-hidden rounded-2xl border border-slate-700/70 bg-gradient-to-br from-slate-900/85 via-slate-900/70 to-slate-800/70 backdrop-blur-md shadow-[0_10px_24px_rgba(0,0,0,0.26)] px-2 py-1.5 w-[120px]">
+            <div className="absolute inset-0 bg-gradient-to-tr from-white/4 to-transparent pointer-events-none" />
+            <div className="flex items-center gap-2 text-slate-100 mb-1">
+              <span className="h-5 w-5 rounded-lg bg-slate-800/80 border border-slate-700/80 grid place-items-center shadow-inner text-[10px]">
+                <Layers size={12} />
+              </span>
+              <div className="leading-none min-w-0">
+                <div className="text-[8px] uppercase tracking-wide text-slate-300">Mapa base</div>
+                <div className="text-[10px] font-semibold text-white truncate max-w-[90px]">
+                  {currentLayer?.name || "Mapa"}
+                </div>
+              </div>
+            </div>
             <select
               value={baseMap}
               onChange={(e) => setBaseMap(e.target.value)}
-              className="w-full border border-slate-700 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-sky-400 bg-slate-900 text-slate-100"
+              className="w-full border border-slate-700/70 rounded-lg px-2 py-1.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-sky-400 bg-slate-900/80 text-slate-100 shadow-inner"
             >
               {baseLayers.map((layer) => (
                 <option key={layer.id} value={layer.id}>
@@ -938,22 +1071,6 @@ export default function MapView({ onSelectDevice, height }) {
               ))}
             </select>
           </div>
-          {[
-            { label: "Total", value: devices.length, bg: "bg-slate-800/95", border: "border-slate-600" },
-            { label: "Online", value: onlineCount, bg: "bg-emerald-900/90", border: "border-emerald-600" },
-            { label: "Offline", value: offlineCount, bg: "bg-red-900/90", border: "border-red-600" },
-            { label: "Desconhecido", value: unknownCount, bg: "bg-slate-700/90", border: "border-slate-500" },
-            { label: "Movimento", value: movingCount, bg: "bg-sky-900/90", border: "border-sky-600" },
-          ].map((card) => (
-            <button
-              key={card.label}
-              type="button"
-              className={`pointer-events-auto shadow-lg rounded-md border ${card.border} ${card.bg} px-2 py-1 text-left hover:shadow-[0_0_12px_rgba(14,165,233,0.35)] transition w-[110px]`}
-            >
-              <div className="text-[9px] uppercase tracking-wide text-slate-100 leading-none drop-shadow">{card.label}</div>
-              <div className="text-sm font-semibold text-white drop-shadow">{card.value}</div>
-            </button>
-          ))}
         </div>
       </div>
 

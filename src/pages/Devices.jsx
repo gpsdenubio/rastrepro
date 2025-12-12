@@ -32,6 +32,7 @@ import DeviceBlockActions from "../components/DeviceBlockActions";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { useEventSocket } from "../hooks/useEventSocket";
+import { getDevicePhoto } from "../services/devicePhotos";
 
 const categoryIcon = (cat) => {
   const map = {
@@ -481,7 +482,7 @@ export default function Devices() {
                 const speedVal = Number(lastPos?.speed ?? d?.speed ?? d?.attributes?.speed);
                 const hasSpeed = Number.isFinite(speedVal);
                 const protocol = lastPos?.protocol || d?.protocol;
-                const photoUrl = d?.attributes?.photoUrl;
+                const photoUrl = getDevicePhoto(d?.id, d?.uniqueId);
                 const expanded = expandedId === d.id;
 
                 return (
